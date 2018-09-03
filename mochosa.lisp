@@ -1,3 +1,5 @@
+;; -*- tab-width: 2 -*-
+
 (ql:quickload '(:Dexador :cl-ppcre :cl-cffi-gtk))
 
 
@@ -14,109 +16,100 @@
 (defstruct dlog
   (lst nil))
 
-;;取得したレスの中の特殊文字っぽいものを使用できるよう（エラーでないように）に置き換え
-(defun tikan-dayo (res)
-  (let* ((res-kai (ppcre:regex-replace-all "~" res "~~"))
-	       (res-ampa (ppcre:regex-replace-all "&(?![#A-Za-z0-9]+;)" res-kai "&amp;")))
-    res-ampa))
+;;文字実体参照の先頭でない、孤立したアンパサンドを &amp; に置換
+(defun escape-amp (res)
+  (ppcre:regex-replace-all "&(?![#A-Za-z0-9]+;)" res "&amp;"))
 
-;;<br>を~%に置き換える formatで改行するように
-(defun regex-br (res1 honbun)
+;;<br>を改行文字に置き換える
+(defun regex-br (res honbun)
+  (ppcre:regex-replace-all "<br>"
+                           (concatenate 'string (first res) ":" (second res) ":"
+                                        (fourth res) "<br>"
+                                        honbun "<br>")
+                           (format nil "~%")))
+
+;;URLがhで始まっていなかったらhを付ける
+(defun supplement-h (url)
+  (if (and (> (length url) 0) (eq #\h (aref url 0)))
+      url
+    (concatenate 'string "h" url)))
+
+;;h?ttps? なURLをリンクにする
+(defun linkify-urls (honbun)
   (ppcre:regex-replace-all
-   "<br>"
-   (concatenate 'string (first res1) ":" (second res1)
-		            ":" (fourth res1) "~%  "
-		            honbun "~%")
-   "~%  "))
+   "h?ttps?://[-_.!~*\'()a-zA-Z0-9;/?:@&=+$,%#]+"
+   honbun
+   (lambda (target-string start end match-start match-end reg-starts reg-ends)
+     (declare (ignore start end reg-starts reg-ends))
 
-;;本文のなかに >>数字 なリンクがあるときにただの >>数字 に置き換える
-;;>>数字-数字も置き換える
-(defun tikan-link-bun (honbun)
-  (let* ((okikae (ppcre:scan-to-strings "(<a.*?</a>)" honbun))
-	       (tikan-a (ppcre:scan-to-strings "(&gt;&gt;[0-9]+</a>)" honbun)))
-    (when (null tikan-a)
-      (setf tikan-a (ppcre:scan-to-strings "(&gt;&gt;[0-9]+-[0-9]+</a>)" honbun)))
-	  (let* ((tikan (ppcre:regex-replace "</a>" tikan-a ""))
-	         (honbun-t (ppcre:regex-replace okikae honbun tikan)))
-      honbun-t)))
+     (let ((url (subseq target-string match-start match-end)))
+       (format nil "<a href=\"~A\">~A</a>" (supplement-h url) url)))))
 
-;;本文の後ろにリンクくっつける
-(defun add-link (url honbun)
-  (concatenate 'string honbun "~%" "<a href=\"" url "\">リンク</a>"))
+;;アンカーのタグを外した本文と、アンカーに指定されていたread.cgiへの
+;;パスのリストを返す
+(defun parse-untag-anchors (honbun)
+  (let ((path-list nil))
+    (let ((honbun1 (ppcre:regex-replace-all
+                    "<a href=\"(.*?)\" target=\"_blank\">(.*?)</a>"
+                    honbun
+                    (lambda (target-string start end match-start match-end reg-starts reg-ends)
+                      (declare (ignore start end match-start match-end))
 
-;;レス作成
-(defun make-res (res)
-  (let* ((res-1 (ppcre:split "<>" res))
-         (honbun (fifth res-1))
-	       (ttp (ppcre:scan-to-strings "(ttps?://[-_.!~*\'()a-zA-Z0-9;/?:@&=+$,%#]+)" honbun))
-	       (http (ppcre:scan-to-strings "(https?://[-_.!~*\'()a-zA-Z0-9;/?:@&=+$,%#]+)" honbun)))
-    (if (ppcre:scan "(<a.*</a>)" honbun)
-        (setf honbun (tikan-link-bun honbun)))
-    (cond
-      ((stringp ttp) (setf honbun (add-link (concatenate 'string "h" ttp) honbun)))
-      ((stringp http) (setf honbun (add-link http honbun))))
-    (ppcre:regex-replace-all "<br>"
-                             (concatenate 'string (first res-1) ":" (second res-1) ":"
-					                                (fourth res-1) "~%  "
-                                          honbun "~%")
-                             "~%  ")))
+                      (let ((path (subseq target-string (aref reg-starts 0) (aref reg-ends 0)))
+                            (text (subseq target-string (aref reg-starts 1) (aref reg-ends 1))))
+                        (push path path-list)
+                        text)))))
+      (values honbun1 (reverse path-list)))))
 
-;;
-(defun make-res-2 (res vbox1)
-  (let* ((res-1 (ppcre:split "<>" res))
-	       (honbun (fifth res-1))
-	       (tooltip? t)
-	       (tooltip-t nil))
-    (cond ((ppcre:scan "(<a.*</a>)" honbun) ;;本文の中に過去レス指定があったらツールチップで表示
-	         (loop ;;改造したいところ
-	               (if (ppcre:scan "(<a.*</a>)" honbun) ;;怪しい
-		                 (let* ((url1 (ppcre:scan-to-strings "(/bbs.*?\")" honbun))
-			                      (url2 (ppcre:regex-replace "\"" url1 ""))
-			                      (url3 (concatenate 'string "http://jbbs.shitaraba.net" url2))
-			                      (url4 (ppcre:regex-replace "read.cgi" url3 "rawmode.cgi"))
-			                      (honbun-t (tikan-link-bun honbun))
-			                      (tooltip-res1 (tikan-dayo (nth-value 0 (dex:get url4))))
-			                      (tool-res1 (ppcre:split "<>" tooltip-res1))
-			                      (tool-honbun (fifth tool-res1)))
-		                   (if (equal "" tooltip-res1)
-		                       (setf tooltip? nil)
-		                       (if (ppcre:scan "(<a.*</a>)" tool-honbun)
-			                         (progn
-			                           (loop ;;怪しい
-			                                 (if (ppcre:scan "(<a.*</a>)" tool-honbun)
-				                                   (let* ((tool-honbun-m (tikan-link-bun tool-honbun)))
-				                                     (setf tool-honbun tool-honbun-m))
-				                                   (return)))
-			                           (let* ((tooltip-res2 (regex-br tool-res1 tool-honbun)))
-			                             (if tooltip-t
-				                               (setf tooltip-t (concatenate 'string tooltip-t "~%" tooltip-res2))
-				                               (setf tooltip-t tooltip-res2))))
-			                         (let* ((tooltip-res2 (make-res tooltip-res1)))
-			                           (if tooltip-t
-				                             (setf tooltip-t (concatenate 'string tooltip-t "~%" tooltip-res2))
-				                             (setf tooltip-t tooltip-res2)))))
-		                   (setf honbun honbun-t))
-		                 (return)))
-	         (let* ((new-res (regex-br res-1 honbun))
-		              (new-label (make-instance
-			                        'gtk-label :xalign 0.0 :selectable t :use-markup t :wrap t
-					                    :label (format nil new-res))))
-	           (if tooltip?
-		             (setf (gtk-widget-tooltip-markup new-label) (format nil tooltip-t)))
-	           (gtk-widget-modify-font new-label
-				                             (pango-font-description-from-string
-				                              *font*))
-	           (gtk-box-pack-start vbox1 new-label :expand nil)))
-	        (t ;;普通にレス生成
-	         (let* ((res-t (make-res res))
-		              (new-label
-		                (make-instance
-		                 'gtk-label :xalign 0.0 :selectable t :use-markup t :wrap t
-				             :label (format nil res-t))))
-	           (gtk-widget-modify-font new-label
-				                             (pango-font-description-from-string
-				                              *font*))
-	           (gtk-box-pack-start vbox1 new-label :expand nil))))))
+;;レス作成　GTKマークアップされた本文と、アンカーのパスリストを返す
+(defun make-res (res-string)
+  (let* ((res-1 (ppcre:split "<>" res-string))
+	       (honbun (fifth res-1)))
+    (multiple-value-bind
+        (honbun1 path-list)
+        (parse-untag-anchors honbun)
+      (values (regex-br res-1 (linkify-urls honbun1)) path-list))))
+
+;;アンカーのパスを該当レスを取得するrawmode.cgiへのURLに変換する
+(defun anchor-path->rawmode-url (path)
+  (concatenate 'string "https://jbbs.shitaraba.net"
+               (ppcre:regex-replace "read\.cgi" path "rawmode.cgi")))
+
+;;ramode.cgiで取得されるDATを一行ごとのリストにする
+(defun dat-lines (data-text)
+  (ppcre:split "\\n" data-text))
+
+;;レスをGTKマークアップにしてoutput-streamに出力する
+(defun print-res (output-stream res-1)
+  (format output-stream "~A" (make-res res-1)))
+
+;;アンカーのリストから、該当レスを取得してGTKマークアップとして整形する
+(defun make-tooltip-text (anchor-path-list)
+  (let ((rawmode-urls (mapcar #'anchor-path->rawmode-url anchor-path-list))
+        (output (make-string-output-stream)))
+    (dolist (url rawmode-urls)
+      (dolist (dat-line (dat-lines (nth-value 0 (dex:get url))))
+        (print-res output dat-line)
+        (terpri output))) ;; 一行あける。
+    (get-output-stream-string output)))
+
+;;DAT行のレスをGtkLabelとしてGtkBoxに追加する。
+(defun make-res-2 (dat-line vbox1)
+  (let ((tooltip-text nil))
+    (multiple-value-bind
+        (tagged-text anchor-path-list)
+        (make-res dat-line)
+
+      (when anchor-path-list
+        (setf tooltip-text (make-tooltip-text anchor-path-list)))
+
+      (let* ((new-label (make-instance
+                         'gtk-label :xalign 0.0 :selectable t :use-markup t :wrap t
+                         :label tagged-text)))
+        (when tooltip-text
+          (setf (gtk-widget-tooltip-markup new-label) tooltip-text))
+        (gtk-widget-modify-font new-label (pango-font-description-from-string *font*))
+        (gtk-box-pack-start vbox1 new-label :expand nil)))))
 
 ;;ダイアログの位置を調整
 (defun reset-dialog-position (dlog)
@@ -129,7 +122,7 @@
 
 ;;新着レス
 (defun get-new-res (url new-res-num)
-  (tikan-dayo (nth-value 0 (dex:get
+  (escape-amp (nth-value 0 (dex:get
                             (concatenate 'string url (write-to-string new-res-num))))))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
@@ -142,7 +135,7 @@
 				                        :height-request 50
 				                        :text ;;"新着メッセージ"
 				                        ;;:secondary-text
-				                        (format nil ress))))
+				                        ress)))
 	  ;;新着メッセージをvbox1へ
 	  (make-res-2 new-res vbox1)
 	  ;;ダイアログフォント
@@ -269,7 +262,7 @@
 						                        (nth-value 0 (dex:get url)))))
 				         (setf new-res-num (1+ (length res-list)))
 				         (dolist (res res-list)
-				           (make-res-2 (tikan-dayo res) vbox1)))))
+				           (make-res-2 (escape-amp res) vbox1)))))
 			   (setf (gtk-switch-active l-switch) t)
 			   (gtk-scrolled-window-add-with-viewport scrolled vbox1)
 			   (gtk-widget-show-all scrolled)))
