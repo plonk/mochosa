@@ -59,7 +59,7 @@
                             (text (subseq target-string (aref reg-starts 1) (aref reg-ends 1))))
                         (push path path-list)
                         text)))))
-      (values honbun1 (reverse path-list)))))
+      (values honbun1  (reverse path-list)))))
 
 ;;レス作成　GTKマークアップされた本文と、アンカーのパスリストを返す
 (defun make-res (res-string)
@@ -126,7 +126,7 @@
                             (concatenate 'string url (write-to-string new-res-num))))))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
-(defun make-dialog (new-res dlog vbox1 scrolled vadj)
+(defun make-dialog (new-res dlog vadj)
   (let* ((ress (make-res new-res))
 	       (dialog (make-instance 'gtk-message-dialog
 				                        :message-type :info
@@ -137,7 +137,7 @@
 				                        ;;:secondary-text
 				                        ress)))
 	  ;;新着メッセージをvbox1へ
-	  (make-res-2 new-res vbox1)
+    ;;(make-res-2 new-res vbox1)
 	  ;;ダイアログフォント
 	  (gtk-widget-modify-font dialog
 				                    (pango-font-description-from-string
@@ -157,75 +157,74 @@
                                   (when (dlog-lst dlog)
                                     (reset-dialog-position dlog))
 					                        nil))
-	  (g-timeout-add 1000 (lambda () ;;スクロールウィンドウの一番下へ
-			                    (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
-								                                            (gtk-adjustment-page-size vadj)))
-				                  nil))
-	  (gtk-widget-show-all scrolled)))
+	  (g-timeout-add 300 (lambda () ;;スクロールウィンドウの一番下へ
+                         (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
+                                                           (gtk-adjustment-page-size vadj)))
+                         nil))))
+	  ;;(gtk-widget-show-all scrolled)))
 
 ;;カウントダウン文字列生成  改造したいところ
 (defun make-number-c (auto-time c-d-n)
-  (let ((num c-d-n)
-	      (num-str nil))
-    (dotimes (i auto-time)
-      (setf num-str (concatenate 'string
-				                         num-str " " (write-to-string num)))
-      (decf num))
-    num-str))
+  (let ((out (make-string-output-stream)))
+    (loop for i from c-d-n downto 0
+          repeat auto-time
+          do (format out "~a " (write-to-string i)))
+    (get-output-stream-string out)))
 
 
 
 (defun main ()
   (within-main-loop
     (let* ((window (make-instance 'gtk-window
-				                          :type :toplevel
-				                          :title "もげぞうβは超サイコー"
-				                          :border-width 0
-				                          :width-request 550
-				                          :height-request 500))
-	         (scrolled (make-instance 'gtk-scrolled-window
+                                  :type :toplevel
+                                  :title "もげぞうβは超サイコー"
+                                  :border-width 0
+                                  :width-request 550
+                                  :height-request 500))
+           (scrolled (make-instance 'gtk-scrolled-window
                                     :border-width 12
                                     :hscrollbar-policy :automatic
                                     :vscrollbar-policy :always))
-	         (new-res-num 0)
-	         (vadj (gtk-scrolled-window-get-vadjustment scrolled))
+           (new-res-num 0)
+           (vadj (gtk-scrolled-window-get-vadjustment scrolled))
            (title-label (make-instance 'gtk-label :label "URL:"))
-	         (auto-load-label (make-instance 'gtk-label :label "自動読込:"))
-	         (preurl (with-open-file (in "URL.dat" :direction :input)
-		                 (read-line in nil))) ;;前回開いたURL
+           (auto-load-label (make-instance 'gtk-label :label "自動読込:"))
+           (preurl (with-open-file (in "URL.dat" :direction :input)
+                     (read-line in nil))) ;;前回開いたURL
 
            (title-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
-	         (url nil) (dialog (make-dlog))
-	         (id 0)
-           (load-label-id 0) (auto-time 1)
-	         (c-d-n (floor *auto-reload-time* 1000)) ;;カウントダウン用
+           (url nil) (dialog (make-dlog))
+           (id 0) ;;(res-array (make-array 1000))
+           (auto-time 1)
+           (c-d-n (floor *auto-reload-time* 1000)) ;;カウントダウン用
            (button (make-instance 'gtk-button :label "読込"
-					                                    :height-request 20 :width-request 40 :expnad nil))
-	         (l-switch (make-instance 'gtk-switch :active nil
-						                                    :height-request 20 :width-request 40 :expnad nil))
-	         (load-label (make-instance 'gtk-label :label "読み込み中:"))
-	         (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)"))
-	         (test-btn (make-instance 'gtk-button :label "最新レス"
-					                                      :height-request 20 :width-request 40 :expnad nil))
-	         (vbox1 (make-instance 'gtk-box ;;レス表示部分
-				                         :orientation :vertical
-				                         :border-width 12
-				                         :spacing 6))
-	         (hbox1 (make-instance 'gtk-box ;;オートリロードしてるとこ
-				                         :orientation :horizontal
-				                         :spacing 1 :expand nil))
-	         (hbox (make-instance 'gtk-box ;;URLとか
+                                              :height-request 20 :width-request 40 :expnad nil))
+           (l-switch (make-instance 'gtk-switch :active nil
+                                                :height-request 20 :width-request 40 :expnad nil))
+           (load-label (make-instance 'gtk-label :label "読み込み中:"))
+           (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)"))
+           (test-btn (make-instance 'gtk-button :label "最新レス"
+                                                :height-request 20 :width-request 40 :expnad nil))
+           (vbox1 (make-instance 'gtk-box ;;レス表示部分
+                                 :orientation :vertical
+                                 :border-width 12
+                                 :spacing 6))
+           (hbox1 (make-instance 'gtk-box ;;オートリロードしてるとこ
+                                 :orientation :horizontal
+                                 :spacing 1 :expand nil))
+           (hbox (make-instance 'gtk-box ;;URLとか
                                 :orientation :horizontal
                                 :spacing 1 :expand nil))
-	         (vbox2 (make-instance 'gtk-box ;;vbox1とhbox1とhboxいれてる？
-				                         :orientation :vertical
-				                         :expand nil
-				                         :spacing 6)))
+           (vbox2 (make-instance 'gtk-box ;;vbox1とhbox1とhboxいれてる？
+                                 :orientation :vertical
+                                 :expand nil
+                                 :spacing 6)))
       ;; Define the signal handlers
       (g-signal-connect window "destroy"
                         (lambda (w)
                           (declare (ignore w))
-			                    (g-source-remove id)
+                          (when (/= id 0)
+                            (g-source-remove id))
                           (leave-gtk-main)))
       (setf (gtk-widget-tooltip-text button) "hoge")
       (gtk-box-pack-start hbox title-label :expand nil :fill nil :padding 0)
@@ -242,30 +241,35 @@
 
       (g-signal-connect ;;読み込みボタン
        button "clicked"
-			 (lambda (widget)
-			   (declare (ignore widget))
-			   (if (ppcre:scan "shitaraba.net/bbs" (gtk-entry-text title-entry))
-			       (progn
-				       (with-open-file (out "URL.dat" :direction :output
-							                                :if-exists :supersede)
-				         (format out (gtk-entry-text title-entry))) ;;読み込んだURLを書き出す
-			         (gtk-widget-destroy vbox1)                   ;;なんだ？
-				       (setf vbox1 (make-instance 'gtk-box
-							                            :orientation :vertical
-							                            :border-width 12
-							                            :spacing 6))
-				       (setf url (cl-ppcre:regex-replace "read"
-								                                 (gtk-entry-text title-entry)
-								                                 "rawmode"))
-				       (let ((res-list
-					             (ppcre:split "\\n"
-						                        (nth-value 0 (dex:get url)))))
-				         (setf new-res-num (1+ (length res-list)))
-				         (dolist (res res-list)
-				           (make-res-2 (escape-amp res) vbox1)))))
-			   (setf (gtk-switch-active l-switch) t)
-			   (gtk-scrolled-window-add-with-viewport scrolled vbox1)
-			   (gtk-widget-show-all scrolled)))
+       (lambda (widget)
+         (declare (ignore widget))
+         (when (ppcre:scan "shitaraba.net/bbs" (gtk-entry-text title-entry))
+           (with-open-file (out "URL.dat" :direction :output
+                                          :if-exists :supersede)
+             (format out (gtk-entry-text title-entry))) ;;読み込んだURLを書き出す
+           (gtk-widget-destroy vbox1) ;;一回読み込んだあとにもっかい読み込むときレス消す
+           (setf vbox1 (make-instance 'gtk-box
+                                      :orientation :vertical
+                                      :border-width 12
+                                      :spacing 6))
+           (setf url (cl-ppcre:regex-replace "read"
+                                             (gtk-entry-text title-entry)
+                                             "rawmode"))
+           (let ((res-list
+                   (ppcre:split "\\n"
+                                (nth-value 0 (dex:get url)))))
+             (setf new-res-num (1+ (length res-list)))
+             (dolist (res res-list)
+               (make-res-2 (escape-amp res) vbox1)))
+           (setf (gtk-switch-active l-switch) t)
+           (gtk-scrolled-window-add-with-viewport scrolled vbox1)
+           (g-timeout-add ;;0.5秒後に一番下にいく
+            500
+            (lambda ()
+              (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
+                                                (gtk-adjustment-page-size vadj)))
+              nil))
+           (gtk-widget-show-all scrolled))))
       ;;スイッチ オートリロード
       (g-signal-connect
        l-switch
@@ -273,39 +277,34 @@
        (lambda (widget param)
          (declare (ignore param))
          (if (gtk-switch-active widget) ;; t:on nil:off
-	           (if url
-		             (setf id (g-timeout-add
-                           *auto-reload-time*
-					                 (lambda ()
-					                   (let ((res (get-new-res url new-res-num)))
+             (when url
+               (setf id (g-timeout-add
+                         1000
+                         (lambda ()
+                           (setf (gtk-label-label count-down-label)
+                                 (make-number-c auto-time c-d-n))
+                           (incf auto-time)
+                           (when (> auto-time c-d-n)
+                             (let ((res (get-new-res url new-res-num)))
                                (when (not (equal "" res))
-                                 (make-dialog res dialog vbox1 scrolled vadj)
-                                 (setf new-res-num (1+ new-res-num))))
-
-					                   ;;常にカウントダウンするのでtを返す
-					                   t))
-			                 load-label-id (g-timeout-add
-                                      1000
-						                          (lambda ()
-							                          (setf (gtk-label-label count-down-label)
-							                                (make-number-c auto-time c-d-n))
-							                          (incf auto-time)
-							                          (if (> auto-time c-d-n)
-							                              (setf auto-time 1))
-							                          (gtk-widget-show-all hbox1)
-							                          ;;常にカウントダウンするのでtを返す
-							                          t))))
-	           (if (/= 0 id) ;;わからん オートリロード止めるはず
-		             (progn (g-source-remove id)
-			                  (g-source-remove load-label-id)
-			                  (setf auto-time 1))))))
+                                 (make-dialog res dialog vadj)
+                                 (make-res-2 res vbox1)
+                                 (gtk-widget-show-all scrolled)
+                                 (incf new-res-num))
+                               (setf auto-time 1)))
+                           (gtk-widget-show-all hbox1)
+                           ;;常にカウントダウンするのでtを返す
+                           t))))
+             (when (/= 0 id) ;;わからん オートリロード止めるはず
+               (g-source-remove id)
+               (setf auto-time 1)))))
       (g-signal-connect ;;最新レスへ スクロールウィンドウの一番下に行く
        test-btn
        "clicked"
-			 (lambda (widget)
-			   (declare (ignore widget))
-			   (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
-							                             (gtk-adjustment-page-size vadj)))))
+       (lambda (widget)
+         (declare (ignore widget))
+         (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
+                                           (gtk-adjustment-page-size vadj)))))
       (gtk-box-pack-start vbox2 scrolled)
       (gtk-box-pack-start vbox2 hbox1 :expand nil :fill nil)
       ;; Put the table into the window
