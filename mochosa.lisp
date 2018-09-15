@@ -313,4 +313,4 @@
       (gtk-widget-show-all window)))
   (join-gtk-main))
 
-(main)
+;;(main)
