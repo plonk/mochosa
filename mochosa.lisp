@@ -28,6 +28,8 @@
 (defun res-number (res)
   (first res))
 (defun res-name-html (res)
+  ;; 名前欄では & が &amp (←セミコロンなし)とエスケープされるので、こ
+  ;; れを正しい &amp; に直す。
   (fix-semicolonless-amp (second res)))
 (defun res-mail (res)
   (third res))
@@ -49,6 +51,7 @@
 (defun fix-semicolonless-amp (str)
   (ppcre:regex-replace-all "&amp" str "&amp;"))
 
+;; メールのあるなしに応じて色を付けた名前のマークアップを返す。
 (defun colorized-name-html (res)
   (if (string-equal "" (res-mail res))
       (format nil "<span color=\"#008800\"><b>~A</b></span>"
@@ -56,6 +59,7 @@
       (format nil "<span color=\"#0000FF\" underline=\"single\"><b>~A</b></span>"
               (res-name-html res))))
 
+;; レス全体をHTMLとして生成する。
 (defun compose-html (res)
   (multiple-value-bind
         (honbun path-list)
@@ -101,6 +105,7 @@
                         (format nil "<span color=\"#0000FF\" underline=\"single\">~A</span>" text))))))
       (values honbun1  (reverse path-list)))))
 
+;; HTMLの文字名をUnicodeコードポイントで返す。
 (defun html-character-name->code-point (name)
   (let ((table '((|exclamation|  . #x0021)
                  (|quot|         . #x0022)
@@ -365,6 +370,8 @@
           (cdr entry)
           nil))))
 
+;; (XMLベースの)Pangoマークアップが対応していない<br>タグと文字実体参
+;; 照を、それぞれ改行文字と数値実体参照に置換する。
 (defun html->pango-markup (html)
   (ppcre:regex-replace-all
    "<br>|&([A-Za-z]+);" html
@@ -379,7 +386,7 @@
                  (format nil "&#~A;" code-point)
                  (format nil "&amp;~A;" $1))))))))
 
-;;レス作成　GTKマークアップされた本文と、アンカーのパスリストを返す
+;;レス作成　Pangoマークアップされた本文と、アンカーのパスリストを返す
 (defun make-res (res-string)
   (multiple-value-bind
         (html path-list)
@@ -395,11 +402,11 @@
 (defun dat-lines (data-text)
   (ppcre:split "\\n" data-text))
 
-;;レスをGTKマークアップにしてoutput-streamに出力する
+;;レスをPangoマークアップにしてoutput-streamに出力する
 (defun print-res (output-stream res-1)
   (format output-stream "~A" (make-res res-1)))
 
-;;アンカーのリストから、該当レスを取得してGTKマークアップとして整形する
+;;アンカーのリストから、該当レスを取得してPangoマークアップとして整形する
 (defun make-tooltip-text (anchor-path-list)
   (let ((rawmode-urls (mapcar #'anchor-path->rawmode-url anchor-path-list))
         (output (make-string-output-stream)))
