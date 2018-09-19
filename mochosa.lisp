@@ -174,7 +174,7 @@
           do (format out "~a " (write-to-string i)))
     (get-output-stream-string out)))
 
-
+;;オートリロード新着レス表示
 (defun auto-reload (url count-down-label dialog vadj scrolled hbox1 vbox1)
   (let ((cd (incf (dlog-countdown dialog)))
         (cdn (dlog-cdn dialog)))
@@ -212,7 +212,6 @@
            (title-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
            (url nil) (dialog (make-dlog :cdn (floor *auto-reload-time* 1000)))
            (id 0) ;;(res-array (make-array 1000))
-           (auto-time 1)
            (button (make-instance 'gtk-button :label "読込"
                                               :height-request 20 :width-request 40 :expnad nil))
            (l-switch (make-instance 'gtk-switch :active nil
@@ -303,7 +302,7 @@
                            t))))
              (when (/= 0 id) ;;わからん オートリロード止めるはず
                (g-source-remove id)
-               (setf auto-time 1)))))
+               (setf (dlog-countdown dialog) 1)))))
       (g-signal-connect ;;最新レスへ スクロールウィンドウの一番下に行く
        test-btn
        "clicked"
