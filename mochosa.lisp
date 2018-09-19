@@ -489,17 +489,17 @@
     (let* ((window (make-instance 'gtk-window
                                   :type :toplevel
                                   :title +application-name+
-                                  :border-width 0
+                                  :border-width 6
                                   :width-request 550
                                   :height-request 500))
            (scrolled (make-instance 'gtk-scrolled-window
-                                    :border-width 12
+                                    :border-width 0
                                     :hscrollbar-policy :automatic
                                     :vscrollbar-policy :always))
            (new-res-num 0)
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
-           (title-label (make-instance 'gtk-label :label "URL:"))
-           (auto-load-label (make-instance 'gtk-label :label "自動読込:"))
+           (title-label (make-instance 'gtk-label :label "URL"))
+           (auto-load-label (make-instance 'gtk-label :label "自動読込"))
            (preurl (with-open-file (in "URL.dat" :direction :input)
                      (read-line in nil))) ;;前回開いたURL
 
@@ -512,8 +512,8 @@
                                               :height-request 20 :width-request 40 :expnad nil))
            (l-switch (make-instance 'gtk-switch :active nil
                                                 :height-request 20 :width-request 40 :expnad nil))
-           (load-label (make-instance 'gtk-label :label "読み込み中:"))
-           (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)"))
+           (load-label (make-instance 'gtk-label :label "読み込み中"))
+           (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)" :xalign 0.0))
            (test-btn (make-instance 'gtk-button :label "最新レス"
                                                 :height-request 20 :width-request 40 :expnad nil))
            (vbox1 (make-instance 'gtk-box ;;レス表示部分
@@ -522,10 +522,10 @@
                                  :spacing 6))
            (hbox1 (make-instance 'gtk-box ;;オートリロードしてるとこ
                                  :orientation :horizontal
-                                 :spacing 1 :expand nil))
+                                 :spacing 6 :expand nil))
            (hbox (make-instance 'gtk-box ;;URLとか
                                 :orientation :horizontal
-                                :spacing 1 :expand nil))
+                                :spacing 6 :expand nil))
            (vbox2 (make-instance 'gtk-box ;;vbox1とhbox1とhboxいれてる？
                                  :orientation :vertical
                                  :expand nil
@@ -540,13 +540,13 @@
       (setf (gtk-widget-tooltip-text button) "hoge")
       (gtk-box-pack-start hbox title-label :expand nil :fill nil :padding 0)
 
-      (gtk-box-pack-start hbox title-entry :expand nil :fill nil :padding 0)
+      (gtk-box-pack-start hbox title-entry :expand t :fill t :padding 0)
       (gtk-box-pack-start hbox button :expand nil :fill nil)
 
       (gtk-box-pack-start hbox1 auto-load-label :expand nil :fill nil)
       (gtk-box-pack-start hbox1 l-switch :expand nil :fill nil)
       (gtk-box-pack-start hbox1 load-label :expand nil :fill nil)
-      (gtk-box-pack-start hbox1 count-down-label :expand nil :fill nil)
+      (gtk-box-pack-start hbox1 count-down-label :expand t :fill t )
       (gtk-box-pack-start hbox1 test-btn :expand nil :fill nil)
       (gtk-box-pack-start vbox2 hbox :expand nil :fill nil)
 
