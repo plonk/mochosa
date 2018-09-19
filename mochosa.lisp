@@ -560,6 +560,12 @@
       (gtk-box-pack-start hbox1 test-btn :expand nil :fill nil)
       (gtk-box-pack-start vbox2 hbox :expand nil :fill nil)
 
+      (g-signal-connect
+       title-entry "activate"
+       (lambda (widget)
+         (declare (ignore widget))
+         (gtk-button-clicked button)))
+
       (g-signal-connect ;;読み込みボタン
        button "clicked"
        (lambda (widget)
