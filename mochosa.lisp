@@ -484,6 +484,16 @@
   (let ((fields (ppcre:split "<>" (car (last res-list)))))
     (read-from-string (car fields))))
 
+(defun thread-url-p (url)
+  (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/[a-z]+/\\d+/\\d+/" url))
+
+(defun normalize-thread-url (url)
+  (multiple-value-bind
+        (match-start match-end reg-starts reg-ends)
+      (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/[a-z]+/\\d+/\\d+/" url)
+    (declare (ignore reg-starts reg-ends))
+    (subseq url match-start match-end)))
+
 (defun main ()
   (within-main-loop
     (let* ((window (make-instance 'gtk-window
@@ -554,7 +564,9 @@
        button "clicked"
        (lambda (widget)
          (declare (ignore widget))
-         (when (ppcre:scan "shitaraba.net/bbs" (gtk-entry-text title-entry))
+         (when (thread-url-p (gtk-entry-text title-entry))
+           (setf (gtk-entry-text title-entry)
+                 (normalize-thread-url (gtk-entry-text title-entry)))
            (with-open-file (out "URL.dat" :direction :output
                                           :if-exists :supersede)
              (format out (gtk-entry-text title-entry))) ;;読み込んだURLを書き出す
