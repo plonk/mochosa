@@ -15,7 +15,10 @@
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
 (defstruct dlog
-  (lst nil))
+  (lst nil)
+  (new-res-num 0)
+  (countdown 0) ;;カウントダウン表示用
+  (cdn 0)) ;;カウントダウン設定
 
 (declaim (ftype (function (string) string) fix-semicolonless-amp)
          (ftype (function (string) string) escape-stray-amp)
@@ -468,7 +471,7 @@
                          (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
                                                            (gtk-adjustment-page-size vadj)))
                          nil))))
-	  ;;(gtk-widget-show-all scrolled)))
+;;(gtk-widget-show-all scrolled)))
 
 ;;カウントダウン文字列生成  改造したいところ
 (defun make-number-c (auto-time c-d-n)
@@ -494,6 +497,23 @@
     (declare (ignore reg-starts reg-ends))
     (subseq url match-start match-end)))
 
+;;オートリロード新着レス表示
+(defun auto-reload (url count-down-label dialog vadj scrolled hbox1 vbox1)
+  (let ((cd (incf (dlog-countdown dialog)))
+        (cdn (dlog-cdn dialog)))
+    (setf (gtk-label-label count-down-label)
+          (make-number-c cd cdn))
+    (gtk-widget-show-all hbox1)
+    (when (> cd cdn)
+      (loop for res = (get-new-res url (dlog-new-res-num dialog)) then res
+            while (not (equal "" res))
+            do (make-dialog res dialog vadj)
+               (make-res-2 res vbox1)
+               (gtk-widget-show-all scrolled)
+               (incf (dlog-new-res-num dialog))
+               (setf res (get-new-res url (dlog-new-res-num dialog))))
+      (setf (dlog-countdown dialog) 1))))
+
 (defun main ()
   (within-main-loop
     (let* ((window (make-instance 'gtk-window
@@ -506,7 +526,6 @@
                                     :border-width 0
                                     :hscrollbar-policy :automatic
                                     :vscrollbar-policy :always))
-           (new-res-num 0)
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
            (title-label (make-instance 'gtk-label :label "URL"))
            (auto-load-label (make-instance 'gtk-label :label "自動読込"))
@@ -514,10 +533,8 @@
                      (read-line in nil))) ;;前回開いたURL
 
            (title-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
-           (url nil) (dialog (make-dlog))
+           (url nil) (dialog (make-dlog :cdn (floor *auto-reload-time* 1000)))
            (id 0) ;;(res-array (make-array 1000))
-           (auto-time 1)
-           (c-d-n (floor *auto-reload-time* 1000)) ;;カウントダウン用
            (button (make-instance 'gtk-button :label "読込"
                                               :height-request 20 :width-request 40 :expnad nil))
            (l-switch (make-instance 'gtk-switch :active nil
@@ -585,8 +602,9 @@
                                              (gtk-entry-text title-entry)
                                              "rawmode"))
            (let ((res-list
-                   (ppcre:split "\\n" (nth-value 0 (dex:get url)))))
-             (setf new-res-num (1+ (last-res-num res-list)))
+                   (ppcre:split "\\n"
+                                (nth-value 0 (dex:get url)))))
+             (setf (dlog-new-res-num dialog) (1+ (last-res-num res-list)))
              (dolist (res res-list)
                (let ((r (ppcre:split "<>" res)))
                  (when (string-equal "1" (res-number r))
@@ -614,23 +632,13 @@
                (setf id (g-timeout-add
                          1000
                          (lambda ()
-                           (setf (gtk-label-label count-down-label)
-                                 (make-number-c auto-time c-d-n))
-                           (incf auto-time)
-                           (when (> auto-time c-d-n)
-                             (let ((res (get-new-res url new-res-num)))
-                               (when (not (equal "" res))
-                                 (make-dialog res dialog vadj)
-                                 (make-res-2 res vbox1)
-                                 (gtk-widget-show-all scrolled)
-                                 (incf new-res-num))
-                               (setf auto-time 1)))
+                           (auto-reload url count-down-label dialog vadj scrolled hbox1 vbox1)
                            (gtk-widget-show-all hbox1)
                            ;;常にカウントダウンするのでtを返す
                            t))))
              (when (/= 0 id) ;;わからん オートリロード止めるはず
                (g-source-remove id)
-               (setf auto-time 1)))))
+               (setf (dlog-countdown dialog) 1)))))
       (g-signal-connect ;;最新レスへ スクロールウィンドウの一番下に行く
        test-btn
        "clicked"
