@@ -12,6 +12,7 @@
 
 (in-package :mochosa)
 
+(defconstant +application-name+ "もげぞうβは超サイコー")
 
 (defstruct dlog
   (lst nil)
@@ -19,17 +20,57 @@
   (countdown 0) ;;カウントダウン表示用
   (cdn 0)) ;;カウントダウン設定
 
+(declaim (ftype (function (string) string) fix-semicolonless-amp)
+         (ftype (function (string) string) escape-stray-amp)
+         (ftype (function (string) (values string list)) parse-untag-anchors)
+         (ftype (function (string) string) linkify-urls))
+
+(defun res-number (res)
+  (first res))
+(defun res-name-html (res)
+  ;; 名前欄では & が &amp (←セミコロンなし)とエスケープされるので、こ
+  ;; れを正しい &amp; に直す。
+  (fix-semicolonless-amp (second res)))
+(defun res-mail (res)
+  (third res))
+(defun res-date (res)
+  (fourth res))
+(defun res-honbun-html (res)
+  (multiple-value-bind
+        (honbun path-list)
+      (parse-untag-anchors (fifth res))
+    (values (escape-stray-amp (linkify-urls honbun))
+            path-list)))
+(defun res-title (res)
+  (sixth res))
+
 ;;文字実体参照の先頭でない、孤立したアンパサンドを &amp; に置換
-(defun escape-amp (res)
+(defun escape-stray-amp (res)
   (ppcre:regex-replace-all "&(?![#A-Za-z0-9]+;)" res "&amp;"))
 
-;;<br>を改行文字に置き換える
-(defun regex-br (res honbun)
-  (ppcre:regex-replace-all "<br>"
-                           (concatenate 'string (first res) ":" (second res) ":"
-                                        (fourth res) "<br>"
-                                        honbun "<br>")
-                           (format nil "~%")))
+(defun fix-semicolonless-amp (str)
+  (ppcre:regex-replace-all "&amp" str "&amp;"))
+
+;; メールのあるなしに応じて色を付けた名前のマークアップを返す。
+(defun colorized-name-html (res)
+  (if (string-equal "" (res-mail res))
+      (format nil "<span color=\"#008800\"><b>~A</b></span>"
+              (res-name-html res))
+      (format nil "<span color=\"#0000FF\" underline=\"single\"><b>~A</b></span>"
+              (res-name-html res))))
+
+;; レス全体をHTMLとして生成する。
+(defun compose-html (res)
+  (multiple-value-bind
+        (honbun path-list)
+      (res-honbun-html res)
+    (values
+     (format nil "<span color=\"#0000FF\" underline=\"single\">~A</span>：~A：~A<br>~A<br>"
+             (res-number res)
+             (colorized-name-html res)
+             (res-date res)
+             honbun)
+     path-list)))
 
 ;;URLがhで始まっていなかったらhを付ける
 (defun supplement-h (url)
@@ -61,17 +102,296 @@
                       (let ((path (subseq target-string (aref reg-starts 0) (aref reg-ends 0)))
                             (text (subseq target-string (aref reg-starts 1) (aref reg-ends 1))))
                         (push path path-list)
-                        text)))))
+                        (format nil "<span color=\"#0000FF\" underline=\"single\">~A</span>" text))))))
       (values honbun1  (reverse path-list)))))
 
-;;レス作成　GTKマークアップされた本文と、アンカーのパスリストを返す
+;; HTMLの文字名をUnicodeコードポイントで返す。
+(defun html-character-name->code-point (name)
+  (let ((table '((|exclamation|  . #x0021)
+                 (|quot|         . #x0022)
+                 (|percent|      . #x0025)
+                 (|amp|          . #x0026)
+                 (|apos|         . #x0027)
+                 (|add|          . #x002B)
+                 (|lt|           . #x003C)
+                 (|equal|        . #x003D)
+                 (|gt|           . #x003E)
+                 (|nbsp|         . #x00A0)
+                 (|iexcl|        . #x00A1)
+                 (|cent|         . #x00A2)
+                 (|pound|        . #x00A3)
+                 (|curren|       . #x00A4)
+                 (|yen|          . #x00A5)
+                 (|brvbar|       . #x00A6)
+                 (|sect|         . #x00A7)
+                 (|uml|          . #x00A8)
+                 (|copy|         . #x00A9)
+                 (|ordf|         . #x00AA)
+                 (|laquo|        . #x00AB)
+                 (|not|          . #x00AC)
+                 (|shy|          . #x00AD)
+                 (|reg|          . #x00AE)
+                 (|macr|         . #x00AF)
+                 (|deg|          . #x00B0)
+                 (|plusmn|       . #x00B1)
+                 (|sup2|         . #x00B2)
+                 (|sup3|         . #x00B3)
+                 (|acute|        . #x00B4)
+                 (|micro|        . #x00B5)
+                 (|para|         . #x00B6)
+                 (|middot|       . #x00B7)
+                 (|cedil|        . #x00B8)
+                 (|sup1|         . #x00B9)
+                 (|ordm|         . #x00BA)
+                 (|raquo|        . #x00BB)
+                 (|frac14|       . #x00BC)
+                 (|frac12|       . #x00BD)
+                 (|frac34|       . #x00BE)
+                 (|iquest|       . #x00BF)
+                 (|Agrave|       . #x00C0)
+                 (|Aacute|       . #x00C1)
+                 (|Acirc|        . #x00C2)
+                 (|Atilde|       . #x00C3)
+                 (|Auml|         . #x00C4)
+                 (|Aring|        . #x00C5)
+                 (|AElig|        . #x00C6)
+                 (|Ccedil|       . #x00C7)
+                 (|Egrave|       . #x00C8)
+                 (|Eacute|       . #x00C9)
+                 (|Ecirc|        . #x00CA)
+                 (|Euml|         . #x00CB)
+                 (|Igrave|       . #x00CC)
+                 (|Iacute|       . #x00CD)
+                 (|Icirc|        . #x00CE)
+                 (|Iuml|         . #x00CF)
+                 (|ETH|          . #x00D0)
+                 (|Ntilde|       . #x00D1)
+                 (|Ograve|       . #x00D2)
+                 (|Oacute|       . #x00D3)
+                 (|Ocirc|        . #x00D4)
+                 (|Otilde|       . #x00D5)
+                 (|Ouml|         . #x00D6)
+                 (|times|        . #x00D7)
+                 (|Oslash|       . #x00D8)
+                 (|Ugrave|       . #x00D9)
+                 (|Uacute|       . #x00DA)
+                 (|Ucirc|        . #x00DB)
+                 (|Uuml|         . #x00DC)
+                 (|Yacute|       . #x00DD)
+                 (|THORN|        . #x00DE)
+                 (|szlig|        . #x00DF)
+                 (|agrave|       . #x00E0)
+                 (|aacute|       . #x00E1)
+                 (|acirc|        . #x00E2)
+                 (|atilde|       . #x00E3)
+                 (|auml|         . #x00E4)
+                 (|aring|        . #x00E5)
+                 (|aelig|        . #x00E6)
+                 (|ccedil|       . #x00E7)
+                 (|egrave|       . #x00E8)
+                 (|eacute|       . #x00E9)
+                 (|ecirc|        . #x00EA)
+                 (|euml|         . #x00EB)
+                 (|igrave|       . #x00EC)
+                 (|iacute|       . #x00ED)
+                 (|icirc|        . #x00EE)
+                 (|iuml|         . #x00EF)
+                 (|eth|          . #x00F0)
+                 (|ntilde|       . #x00F1)
+                 (|ograve|       . #x00F2)
+                 (|oacute|       . #x00F3)
+                 (|ocirc|        . #x00F4)
+                 (|otilde|       . #x00F5)
+                 (|ouml|         . #x00F6)
+                 (|divide|       . #x00F7)
+                 (|oslash|       . #x00F8)
+                 (|ugrave|       . #x00F9)
+                 (|uacute|       . #x00FA)
+                 (|ucirc|        . #x00FB)
+                 (|uuml|         . #x00FC)
+                 (|yacute|       . #x00FD)
+                 (|thorn|        . #x00FE)
+                 (|yuml|         . #x00FF)
+                 (|OElig|        . #x0152)
+                 (|oelig|        . #x0153)
+                 (|Scaron|       . #x0160)
+                 (|scaron|       . #x0161)
+                 (|Yuml|         . #x0178)
+                 (|fnof|         . #x0192)
+                 (|circ|         . #x02C6)
+                 (|tilde|        . #x02DC)
+                 (|Alpha|        . #x0391)
+                 (|Beta|         . #x0392)
+                 (|Gamma|        . #x0393)
+                 (|Delta|        . #x0394)
+                 (|Epsilon|      . #x0395)
+                 (|Zeta|         . #x0396)
+                 (|Eta|          . #x0397)
+                 (|Theta|        . #x0398)
+                 (|Iota|         . #x0399)
+                 (|Kappa|        . #x039A)
+                 (|Lambda|       . #x039B)
+                 (|Mu|           . #x039C)
+                 (|Nu|           . #x039D)
+                 (|Xi|           . #x039E)
+                 (|Omicron|      . #x039F)
+                 (|Pi|           . #x03A0)
+                 (|Rho|          . #x03A1)
+                 (|Sigma|        . #x03A3)
+                 (|Tau|          . #x03A4)
+                 (|Upsilon|      . #x03A5)
+                 (|Phi|          . #x03A6)
+                 (|Chi|          . #x03A7)
+                 (|Psi|          . #x03A8)
+                 (|Omega|        . #x03A9)
+                 (|alpha|        . #x03B1)
+                 (|beta|         . #x03B2)
+                 (|gamma|        . #x03B3)
+                 (|delta|        . #x03B4)
+                 (|epsilon|      . #x03B5)
+                 (|zeta|         . #x03B6)
+                 (|eta|          . #x03B7)
+                 (|theta|        . #x03B8)
+                 (|iota|         . #x03B9)
+                 (|kappa|        . #x03BA)
+                 (|lambda|       . #x03BB)
+                 (|mu|           . #x03BC)
+                 (|nu|           . #x03BD)
+                 (|xi|           . #x03BE)
+                 (|omicron|      . #x03BF)
+                 (|pi|           . #x03C0)
+                 (|rho|          . #x03C1)
+                 (|sigmaf|       . #x03C2)
+                 (|sigma|        . #x03C3)
+                 (|tau|          . #x03C4)
+                 (|upsilon|      . #x03C5)
+                 (|phi|          . #x03C6)
+                 (|chi|          . #x03C7)
+                 (|psi|          . #x03C8)
+                 (|omega|        . #x03C9)
+                 (|thetasym|     . #x03D1)
+                 (|upsih|        . #x03D2)
+                 (|piv|          . #x03D6)
+                 (|ensp|         . #x2002)
+                 (|emsp|         . #x2003)
+                 (|thinsp|       . #x2009)
+                 (|zwnj|         . #x200C)
+                 (|zwj|          . #x200D)
+                 (|lrm|          . #x200E)
+                 (|rlm|          . #x200F)
+                 (|ndash|        . #x2013)
+                 (|mdash|        . #x2014)
+                 (|horbar|       . #x2015)
+                 (|lsquo|        . #x2018)
+                 (|rsquo|        . #x2019)
+                 (|sbquo|        . #x201A)
+                 (|ldquo|        . #x201C)
+                 (|rdquo|        . #x201D)
+                 (|bdquo|        . #x201E)
+                 (|dagger|       . #x2020)
+                 (|Dagger|       . #x2021)
+                 (|bull|         . #x2022)
+                 (|hellip|       . #x2026)
+                 (|permil|       . #x2030)
+                 (|prime|        . #x2032)
+                 (|Prime|        . #x2033)
+                 (|lsaquo|       . #x2039)
+                 (|rsaquo|       . #x203A)
+                 (|oline|        . #x203E)
+                 (|frasl|        . #x2044)
+                 (|euro|         . #x20AC)
+                 (|image|        . #x2111)
+                 (|weierp|       . #x2118)
+                 (|real|         . #x211C)
+                 (|trade|        . #x2122)
+                 (|alefsym|      . #x2135)
+                 (|larr|         . #x2190)
+                 (|uarr|         . #x2191)
+                 (|rarr|         . #x2192)
+                 (|darr|         . #x2193)
+                 (|harr|         . #x2194)
+                 (|crarr|        . #x21B5)
+                 (|lArr|         . #x21D0)
+                 (|uArr|         . #x21D1)
+                 (|rArr|         . #x21D2)
+                 (|dArr|         . #x21D3)
+                 (|hArr|         . #x21D4)
+                 (|forall|       . #x2200)
+                 (|part|         . #x2202)
+                 (|exist|        . #x2203)
+                 (|empty|        . #x2205)
+                 (|nabla|        . #x2207)
+                 (|isin|         . #x2208)
+                 (|notin|        . #x2209)
+                 (|ni|           . #x220B)
+                 (|prod|         . #x220F)
+                 (|sum|          . #x2211)
+                 (|minus|        . #x2212)
+                 (|lowast|       . #x2217)
+                 (|radic|        . #x221A)
+                 (|prop|         . #x221D)
+                 (|infin|        . #x221E)
+                 (|ang|          . #x2220)
+                 (|and|          . #x2227)
+                 (|or|           . #x2228)
+                 (|cap|          . #x2229)
+                 (|cup|          . #x222A)
+                 (|int|          . #x222B)
+                 (|there4|       . #x2234)
+                 (|sim|          . #x223C)
+                 (|cong|         . #x2245)
+                 (|asymp|        . #x2248)
+                 (|ne|           . #x2260)
+                 (|equiv|        . #x2261)
+                 (|le|           . #x2264)
+                 (|ge|           . #x2265)
+                 (|sub|          . #x2282)
+                 (|sup|          . #x2283)
+                 (|nsub|         . #x2284)
+                 (|sube|         . #x2286)
+                 (|supe|         . #x2287)
+                 (|oplus|        . #x2295)
+                 (|otimes|       . #x2297)
+                 (|perp|         . #x22A5)
+                 (|sdot|         . #x22C5)
+                 (|lceil|        . #x2308)
+                 (|rceil|        . #x2309)
+                 (|lfloor|       . #x230A)
+                 (|rfloor|       . #x230B)
+                 (|lang|         . #x2329)
+                 (|rang|         . #x232A)
+                 (|loz|          . #x25CA)
+                 (|spades|       . #x2660)
+                 (|clubs|        . #x2663)
+                 (|hearts|       . #x2665)
+                 (|diams|        . #x2666))))
+    (let ((entry (assoc (intern name :mochosa) table)))
+      (if entry
+          (cdr entry)
+          nil))))
+
+;; (XMLベースの)Pangoマークアップが対応していない<br>タグと文字実体参
+;; 照を、それぞれ改行文字と数値実体参照に置換する。
+(defun html->pango-markup (html)
+  (ppcre:regex-replace-all
+   "<br>|&([A-Za-z]+);" html
+   (lambda (target-string start end match-start match-end reg-starts reg-ends)
+     (declare (ignore start end))
+     (let (($& (subseq target-string match-start match-end)))
+       (if (string-equal $& "<br>")
+           (format nil "~A" #\Newline)
+           (let* (($1 (subseq target-string (aref reg-starts 0) (aref reg-ends 0)))
+                  (code-point (html-character-name->code-point $1)))
+             (if code-point
+                 (format nil "&#~A;" code-point)
+                 (format nil "&amp;~A;" $1))))))))
+
+;;レス作成　Pangoマークアップされた本文と、アンカーのパスリストを返す
 (defun make-res (res-string)
-  (let* ((res-1 (ppcre:split "<>" res-string))
-	       (honbun (fifth res-1)))
-    (multiple-value-bind
-        (honbun1 path-list)
-        (parse-untag-anchors honbun)
-      (values (regex-br res-1 (linkify-urls honbun1)) path-list))))
+  (multiple-value-bind
+        (html path-list)
+      (compose-html (ppcre:split "<>" res-string))
+    (values (html->pango-markup html) path-list)))
 
 ;;アンカーのパスを該当レスを取得するrawmode.cgiへのURLに変換する
 (defun anchor-path->rawmode-url (path)
@@ -82,11 +402,11 @@
 (defun dat-lines (data-text)
   (ppcre:split "\\n" data-text))
 
-;;レスをGTKマークアップにしてoutput-streamに出力する
+;;レスをPangoマークアップにしてoutput-streamに出力する
 (defun print-res (output-stream res-1)
   (format output-stream "~A" (make-res res-1)))
 
-;;アンカーのリストから、該当レスを取得してGTKマークアップとして整形する
+;;アンカーのリストから、該当レスを取得してPangoマークアップとして整形する
 (defun make-tooltip-text (anchor-path-list)
   (let ((rawmode-urls (mapcar #'anchor-path->rawmode-url anchor-path-list))
         (output (make-string-output-stream)))
@@ -98,21 +418,16 @@
 
 ;;DAT行のレスをGtkLabelとしてGtkBoxに追加する。
 (defun make-res-2 (dat-line vbox1)
-  (let ((tooltip-text nil))
-    (multiple-value-bind
+  (multiple-value-bind
         (tagged-text anchor-path-list)
-        (make-res dat-line)
-
+      (make-res dat-line)
+    (let* ((new-label (make-instance
+                       'gtk-label :xalign 0.0 :selectable t :use-markup t :wrap t
+                       :label tagged-text)))
       (when anchor-path-list
-        (setf tooltip-text (make-tooltip-text anchor-path-list)))
-
-      (let* ((new-label (make-instance
-                         'gtk-label :xalign 0.0 :selectable t :use-markup t :wrap t
-                         :label tagged-text)))
-        (when tooltip-text
-          (setf (gtk-widget-tooltip-markup new-label) tooltip-text))
-        (gtk-widget-modify-font new-label (pango-font-description-from-string *font*))
-        (gtk-box-pack-start vbox1 new-label :expand nil)))))
+        (setf (gtk-widget-tooltip-markup new-label) (make-tooltip-text anchor-path-list)))
+      (gtk-widget-modify-font new-label (pango-font-description-from-string *font*))
+      (gtk-box-pack-start vbox1 new-label :expand nil))))
 
 ;;ダイアログの位置を調整
 (defun reset-dialog-position (dlog)
@@ -125,8 +440,7 @@
 
 ;;新着レス
 (defun get-new-res (url new-res-num)
-  (escape-amp (nth-value 0 (dex:get
-                            (concatenate 'string url (write-to-string new-res-num))))))
+  (nth-value 0 (dex:get (concatenate 'string url (write-to-string new-res-num)))))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
 (defun make-dialog (new-res dlog vadj)
@@ -174,6 +488,22 @@
           do (format out "~a " (write-to-string i)))
     (get-output-stream-string out)))
 
+(defun last-res-num (res-list)
+  (when (null res-list)
+    (error "empty res list"))
+  (let ((fields (ppcre:split "<>" (car (last res-list)))))
+    (read-from-string (car fields))))
+
+(defun thread-url-p (url)
+  (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/[a-z]+/\\d+/\\d+/" url))
+
+(defun normalize-thread-url (url)
+  (multiple-value-bind
+        (match-start match-end reg-starts reg-ends)
+      (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/[a-z]+/\\d+/\\d+/" url)
+    (declare (ignore reg-starts reg-ends))
+    (subseq url match-start match-end)))
+
 ;;オートリロード新着レス表示
 (defun auto-reload (url count-down-label dialog vadj scrolled hbox1 vbox1)
   (let ((cd (incf (dlog-countdown dialog)))
@@ -195,17 +525,17 @@
   (within-main-loop
     (let* ((window (make-instance 'gtk-window
                                   :type :toplevel
-                                  :title "もげぞうβは超サイコー"
-                                  :border-width 0
+                                  :title +application-name+
+                                  :border-width 6
                                   :width-request 550
                                   :height-request 500))
            (scrolled (make-instance 'gtk-scrolled-window
-                                    :border-width 12
+                                    :border-width 0
                                     :hscrollbar-policy :automatic
                                     :vscrollbar-policy :always))
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
-           (title-label (make-instance 'gtk-label :label "URL:"))
-           (auto-load-label (make-instance 'gtk-label :label "自動読込:"))
+           (title-label (make-instance 'gtk-label :label "URL"))
+           (auto-load-label (make-instance 'gtk-label :label "自動読込"))
            (preurl (with-open-file (in "URL.dat" :direction :input)
                      (read-line in nil))) ;;前回開いたURL
 
@@ -216,8 +546,8 @@
                                               :height-request 20 :width-request 40 :expnad nil))
            (l-switch (make-instance 'gtk-switch :active nil
                                                 :height-request 20 :width-request 40 :expnad nil))
-           (load-label (make-instance 'gtk-label :label "読み込み中:"))
-           (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)"))
+           (load-label (make-instance 'gtk-label :label "読み込み中"))
+           (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)" :xalign 0.0))
            (test-btn (make-instance 'gtk-button :label "最新レス"
                                                 :height-request 20 :width-request 40 :expnad nil))
            (vbox1 (make-instance 'gtk-box ;;レス表示部分
@@ -226,10 +556,10 @@
                                  :spacing 6))
            (hbox1 (make-instance 'gtk-box ;;オートリロードしてるとこ
                                  :orientation :horizontal
-                                 :spacing 1 :expand nil))
+                                 :spacing 6 :expand nil))
            (hbox (make-instance 'gtk-box ;;URLとか
                                 :orientation :horizontal
-                                :spacing 1 :expand nil))
+                                :spacing 6 :expand nil))
            (vbox2 (make-instance 'gtk-box ;;vbox1とhbox1とhboxいれてる？
                                  :orientation :vertical
                                  :expand nil
@@ -244,21 +574,29 @@
       (setf (gtk-widget-tooltip-text button) "hoge")
       (gtk-box-pack-start hbox title-label :expand nil :fill nil :padding 0)
 
-      (gtk-box-pack-start hbox title-entry :expand nil :fill nil :padding 0)
+      (gtk-box-pack-start hbox title-entry :expand t :fill t :padding 0)
       (gtk-box-pack-start hbox button :expand nil :fill nil)
 
       (gtk-box-pack-start hbox1 auto-load-label :expand nil :fill nil)
       (gtk-box-pack-start hbox1 l-switch :expand nil :fill nil)
       (gtk-box-pack-start hbox1 load-label :expand nil :fill nil)
-      (gtk-box-pack-start hbox1 count-down-label :expand nil :fill nil)
+      (gtk-box-pack-start hbox1 count-down-label :expand t :fill t )
       (gtk-box-pack-start hbox1 test-btn :expand nil :fill nil)
       (gtk-box-pack-start vbox2 hbox :expand nil :fill nil)
+
+      (g-signal-connect
+       title-entry "activate"
+       (lambda (widget)
+         (declare (ignore widget))
+         (gtk-button-clicked button)))
 
       (g-signal-connect ;;読み込みボタン
        button "clicked"
        (lambda (widget)
          (declare (ignore widget))
-         (when (ppcre:scan "shitaraba.net/bbs" (gtk-entry-text title-entry))
+         (when (thread-url-p (gtk-entry-text title-entry))
+           (setf (gtk-entry-text title-entry)
+                 (normalize-thread-url (gtk-entry-text title-entry)))
            (with-open-file (out "URL.dat" :direction :output
                                           :if-exists :supersede)
              (format out (gtk-entry-text title-entry))) ;;読み込んだURLを書き出す
@@ -273,9 +611,14 @@
            (let ((res-list
                    (ppcre:split "\\n"
                                 (nth-value 0 (dex:get url)))))
-             (setf (dlog-new-res-num dialog) (1+ (length res-list)))
+             (setf (dlog-new-res-num dialog) (1+ (last-res-num res-list)))
              (dolist (res res-list)
-               (make-res-2 (escape-amp res) vbox1)))
+               (let ((r (ppcre:split "<>" res)))
+                 (when (string-equal "1" (res-number r))
+                     (setf (gtk-window-title window)
+                           (format nil "~A - ~A" +application-name+ (res-title r))))
+
+               (make-res-2 res vbox1))))
            (setf (gtk-switch-active l-switch) t)
            (gtk-scrolled-window-add-with-viewport scrolled vbox1)
            (g-timeout-add ;;0.5秒後に一番下にいく
