@@ -14,8 +14,9 @@
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
-(defstruct dlog
-  (lst nil)
+(defstruct mocho 
+	(res-lst nil) ;;レスラベルリスト
+  (dlog-lst nil)
   (new-res-num 0)
   (countdown 0) ;;カウントダウン表示用
   (cdn 0)) ;;カウントダウン設定
@@ -41,6 +42,7 @@
       (parse-untag-anchors (fifth res))
     (values (escape-stray-amp (linkify-urls honbun))
             path-list)))
+
 (defun res-title (res)
   (sixth res))
 
@@ -417,7 +419,7 @@
     (get-output-stream-string output)))
 
 ;;DAT行のレスをGtkLabelとしてGtkBoxに追加する。
-(defun make-res-2 (dat-line vbox1)
+(defun make-res-2 (dat-line mocho vbox1)
   (multiple-value-bind
         (tagged-text anchor-path-list)
       (make-res dat-line)
@@ -427,11 +429,12 @@
       (when anchor-path-list
         (setf (gtk-widget-tooltip-markup new-label) (make-tooltip-text anchor-path-list)))
       (gtk-widget-modify-font new-label (pango-font-description-from-string *font*))
+			(push new-label (mocho-res-lst mocho)) ;;レスリストに入れる
       (gtk-box-pack-start vbox1 new-label :expand nil))))
 
 ;;ダイアログの位置を調整
-(defun reset-dialog-position (dlog)
-  (loop for dialog in (reverse (dlog-lst dlog))
+(defun reset-dialog-position (mocho)
+  (loop for dialog in (reverse (mocho-dlog-lst mocho))
         for i from 0
         do (gtk-window-move dialog ;;ダイアログ表示する位置
 			                      (- (gdk-screen-width) 400)
@@ -443,7 +446,7 @@
   (nth-value 0 (dex:get (concatenate 'string url (write-to-string new-res-num)))))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
-(defun make-dialog (new-res dlog vadj)
+(defun make-dialog (new-res mocho vadj)
   (let* ((ress (make-res new-res))
 	       (dialog (make-instance 'gtk-message-dialog
 				                        :message-type :info
@@ -461,18 +464,18 @@
 				                     *font*))
 	  (gtk-window-move dialog ;;ダイアログ表示する位置
 			               (- (gdk-screen-width) 400)
-			               (* (length (dlog-lst dlog)) 130))
-    (push dialog (dlog-lst dlog)) ;;リストに追加
+			               (* (length (mocho-dlog-lst mocho)) 130))
+    (push dialog (mocho-dlog-lst mocho)) ;;リストに追加
 	  (sb-ext:run-program "/usr/bin/paplay" *sound*) ;;音ならす
 	  (gtk-widget-show dialog) ;;ダイアログ表示
 	  ;;popuoが出た時だけ(一度だけ)カウントダウンなのでnilを返す
 	  (g-timeout-add *popup-time* (lambda () ;;時間たったらダイアログ消す
 					                        (gtk-widget-destroy dialog)
-                                  (setf (dlog-lst dlog)
+                                  (setf (mocho-dlog-lst mocho)
                                         (remove dialog
-                                                (dlog-lst dlog) :test #'equalp))
-                                  (when (dlog-lst dlog)
-                                    (reset-dialog-position dlog))
+                                                (mocho-dlog-lst mocho) :test #'equalp))
+                                  (when (mocho-dlog-lst mocho)
+                                    (reset-dialog-position mocho))
 					                        nil))
 	  (g-timeout-add 300 (lambda () ;;スクロールウィンドウの一番下へ
                          (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
@@ -505,22 +508,57 @@
     (subseq url match-start match-end)))
 
 ;;オートリロード新着レス表示
-(defun auto-reload (url count-down-label dialog vadj scrolled hbox1 vbox1)
-  (let ((cd (incf (dlog-countdown dialog)))
-        (cdn (dlog-cdn dialog)))
+(defun auto-reload (url count-down-label mocho vadj scrolled hbox1 vbox1)
+  (let ((cd (incf (mocho-countdown mocho)))
+        (cdn (mocho-cdn mocho)))
     (setf (gtk-label-label count-down-label)
           (make-number-c cd cdn))
     (gtk-widget-show-all hbox1)
     (when (> cd cdn)
-      (loop for res = (get-new-res url (dlog-new-res-num dialog)) then res
+      (loop for res = (get-new-res url (mocho-new-res-num mocho)) then res ;;新着あるだけ
             while (not (equal "" res))
-            do (make-dialog res dialog vadj)
-               (make-res-2 res vbox1)
+            do (make-dialog res mocho vadj)
+               (make-res-2 res mocho vbox1)
                (gtk-widget-show-all scrolled)
-               (incf (dlog-new-res-num dialog))
-               (setf res (get-new-res url (dlog-new-res-num dialog))))
-      (setf (dlog-countdown dialog) 1))))
+               (incf (mocho-new-res-num mocho))
+               (setf res (get-new-res url (mocho-new-res-num mocho))))
+      (setf (mocho-countdown mocho) 1))))
 
+
+
+;;フォント設定
+(defun set-font (mocho window)
+	(let ((hoge (make-instance 'gtk-font-chooser-dialog :parent window
+														 :font-desc (pango-font-description-from-string *font*))))
+    (case (gtk-dialog-run hoge)
+			(:OK
+			 (let* ((font-name (gtk-font-chooser-get-font hoge))
+							(font-desc (pango-font-description-from-string font-name)))
+				 (setf *font* font-name)
+				 (dolist (res (mocho-res-lst mocho))
+					 (gtk-widget-modify-font res font-desc))))
+			(:CANCEL nil))
+    (gtk-widget-destroy hoge)))
+
+;;設定保存
+(defun save-options ()
+	(with-open-file (out "options.dat" :direction :output
+											 :if-exists :supersede)
+		(dolist (hoge `(,*font* ,*auto-reload-time* ,*popup-time* ,*sound*))
+			(format out "~a~%" hoge))))
+
+;;options.dat 1:font 2:オートリロード時間 3:ポップアップタイム 4:サウンド
+;;設定読み込み TODO
+(defun load-options ()
+	(with-open-file (in "options.dat" :direction :input
+											:if-does-not-exist nil)
+		(loop for line = (read-line in nil)
+			 while line
+			 do (format t "~a~%" line))))
+
+
+
+		
 (defun main ()
   (within-main-loop
     (let* ((window (make-instance 'gtk-window
@@ -533,6 +571,12 @@
                                     :border-width 0
                                     :hscrollbar-policy :automatic
                                     :vscrollbar-policy :always))
+           (menu-1 (gtk-menu-bar-new))
+           (options-item (gtk-menu-item-new-with-label "Options"))
+					 (options-menu (gtk-menu-new))
+					 (font-item (gtk-menu-item-new-with-label "set Font"))
+           (color-item (gtk-menu-item-new-with-label "set Color"))
+					 (save-item (gtk-menu-item-new-with-label "save Options"))
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
            (title-label (make-instance 'gtk-label :label "URL"))
            (auto-load-label (make-instance 'gtk-label :label "自動読込"))
@@ -540,7 +584,7 @@
                      (read-line in nil))) ;;前回開いたURL
 
            (title-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
-           (url nil) (dialog (make-dlog :cdn (floor *auto-reload-time* 1000)))
+           (url nil) (mocho (make-mocho :cdn (floor *auto-reload-time* 1000)))
            (id 0) ;;(res-array (make-array 1000))
            (button (make-instance 'gtk-button :label "読込"
                                               :height-request 20 :width-request 40 :expnad nil))
@@ -564,6 +608,24 @@
                                  :orientation :vertical
                                  :expand nil
                                  :spacing 6)))
+      ;;menu
+      ;;(gtk-menu-shell-append menu-1 font-item)
+      (gtk-menu-shell-append menu-1 options-item)
+			(setf (gtk-menu-item-submenu options-item) options-menu)
+			(gtk-menu-shell-append options-menu font-item)
+      (gtk-menu-shell-append options-menu color-item)
+			(gtk-menu-shell-append options-menu save-item)
+      (gtk-container-add vbox2 menu-1)
+      ;;font設定
+      (g-signal-connect font-item "activate"
+												(lambda (widget)
+													(declare (ignore widget))
+													(set-font mocho window)))
+			;;設定セーブ
+			(g-signal-connect save-item "activate"
+												(lambda (widget)
+													(declare (ignore widget))
+													(save-options)))
       ;; Define the signal handlers
       (g-signal-connect window "destroy"
                         (lambda (w)
@@ -611,14 +673,14 @@
            (let ((res-list
                    (ppcre:split "\\n"
                                 (nth-value 0 (dex:get url)))))
-             (setf (dlog-new-res-num dialog) (1+ (last-res-num res-list)))
+             (setf (mocho-new-res-num mocho) (1+ (last-res-num res-list)))
              (dolist (res res-list)
                (let ((r (ppcre:split "<>" res)))
                  (when (string-equal "1" (res-number r))
-                     (setf (gtk-window-title window)
-                           (format nil "~A - ~A" +application-name+ (res-title r))))
+                   (setf (gtk-window-title window)
+                         (format nil "~A - ~A" +application-name+ (res-title r))))
 
-               (make-res-2 res vbox1))))
+                 (make-res-2 res mocho vbox1))))
            (setf (gtk-switch-active l-switch) t)
            (gtk-scrolled-window-add-with-viewport scrolled vbox1)
            (g-timeout-add ;;0.5秒後に一番下にいく
@@ -639,13 +701,13 @@
                (setf id (g-timeout-add
                          1000
                          (lambda ()
-                           (auto-reload url count-down-label dialog vadj scrolled hbox1 vbox1)
+                           (auto-reload url count-down-label mocho vadj scrolled hbox1 vbox1)
                            (gtk-widget-show-all hbox1)
                            ;;常にカウントダウンするのでtを返す
                            t))))
              (when (/= 0 id) ;;わからん オートリロード止めるはず
                (g-source-remove id)
-               (setf (dlog-countdown dialog) 1)))))
+               (setf (mocho-countdown mocho) 1)))))
       (g-signal-connect ;;最新レスへ スクロールウィンドウの一番下に行く
        test-btn
        "clicked"
@@ -662,3 +724,6 @@
   (join-gtk-main))
 
 (main)
+
+
+
