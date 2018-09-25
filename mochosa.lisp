@@ -14,7 +14,7 @@
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
-(defstruct mocho 
+(defstruct mocho
 	(res-lst nil) ;;レスラベルリスト
   (dlog-lst nil)
   (new-res-num 0)
@@ -529,7 +529,7 @@
 ;;フォント設定
 (defun set-font (mocho window)
 	(let ((hoge (make-instance 'gtk-font-chooser-dialog :parent window
-														 :font-desc (pango-font-description-from-string *font*))))
+                                                      :font-desc (pango-font-description-from-string *font*))))
     (case (gtk-dialog-run hoge)
 			(:OK
 			 (let* ((font-name (gtk-font-chooser-get-font hoge))
@@ -540,10 +540,20 @@
 			(:CANCEL nil))
     (gtk-widget-destroy hoge)))
 
+;;カラー設定
+(defun set-color (vbox1)
+  (let ((hoge (make-instance 'gtk-color-chooser-dialog)))
+    (case (gtk-dialog-run hoge)
+      (:OK
+       (let ((color (gtk-color-chooser-get-rgba hoge)))
+         (gtk-widget-override-background-color vbox1 :normal color)))
+      (:cancel nil))
+    (gtk-widget-destroy hoge)))
+
 ;;設定保存
 (defun save-options ()
 	(with-open-file (out "options.dat" :direction :output
-											 :if-exists :supersede)
+                                     :if-exists :supersede)
 		(dolist (hoge `(,*font* ,*auto-reload-time* ,*popup-time* ,*sound*))
 			(format out "~a~%" hoge))))
 
@@ -551,14 +561,14 @@
 ;;設定読み込み TODO
 (defun load-options ()
 	(with-open-file (in "options.dat" :direction :input
-											:if-does-not-exist nil)
+                                    :if-does-not-exist nil)
 		(loop for line = (read-line in nil)
-			 while line
-			 do (format t "~a~%" line))))
+          while line
+          do (format t "~a~%" line))))
 
 
 
-		
+
 (defun main ()
   (within-main-loop
     (let* ((window (make-instance 'gtk-window
@@ -575,7 +585,7 @@
            (options-item (gtk-menu-item-new-with-label "Options"))
 					 (options-menu (gtk-menu-new))
 					 (font-item (gtk-menu-item-new-with-label "set Font"))
-           (color-item (gtk-menu-item-new-with-label "set Color"))
+           (color-item (gtk-menu-item-new-with-label "set BG Color"))
 					 (save-item (gtk-menu-item-new-with-label "save Options"))
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
            (title-label (make-instance 'gtk-label :label "URL"))
@@ -590,7 +600,8 @@
                                               :height-request 20 :width-request 40 :expnad nil))
            (l-switch (make-instance 'gtk-switch :active nil
                                                 :height-request 20 :width-request 40 :expnad nil))
-           (load-label (make-instance 'gtk-label :label "読み込み中"))
+           (load-label (make-instance 'gtk-label :label "読み込み中"
+                                                 :rgba (gdk-rgba-parse "Blue") ))
            (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)" :xalign 0.0))
            (test-btn (make-instance 'gtk-button :label "最新レス"
                                                 :height-request 20 :width-request 40 :expnad nil))
@@ -621,6 +632,11 @@
 												(lambda (widget)
 													(declare (ignore widget))
 													(set-font mocho window)))
+      ;;back ground color設定
+      (g-signal-connect color-item "activate"
+                        (lambda (widget)
+                          (declare (ignore widget))
+                          (set-color vbox2)))
 			;;設定セーブ
 			(g-signal-connect save-item "activate"
 												(lambda (widget)
@@ -724,6 +740,3 @@
   (join-gtk-main))
 
 (main)
-
-
-
