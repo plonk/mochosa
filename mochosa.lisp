@@ -3,14 +3,22 @@
 (ql:quickload '(:Dexador :cl-ppcre :cl-cffi-gtk))
 
 
-(load "setting.lisp")
+;;(load "setting.lisp")
 
 
 (defpackage :mochosa
-  (:use :gtk :gdk :gdk-pixbuf :gobject :setting-list
-   :glib :gio :pango :cairo :cffi :common-lisp))
+  (:use :gtk :gdk :gdk-pixbuf :gobject
+        :glib :gio :pango :cairo :cffi :common-lisp))
 
 (in-package :mochosa)
+
+(defparameter *auto-reload-time* 9000) ;;自動読み込みの時間
+(defparameter *popup-time* 8000) ;;新着メッセージのポップアップ時間
+(defparameter *font* "Sans Regular 13") ;;フォント設定　"[FAMILY-LIST] [STYLE-OPTIONS] [SIZE]"
+(defparameter *sound*
+  ;;'("/usr/share/sounds/purple/receive.wav")) ;;効果音の場所
+  "/usr/share/sounds/ubuntu/stereo/dialog-question.ogg")
+(defparameter *bg-color* #S(GDK-RGBA :RED 0d0 :GREEN 0d0 :BLUE 0d0 :ALPHA 0d0))
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
@@ -466,7 +474,7 @@
 			               (- (gdk-screen-width) 400)
 			               (* (length (mocho-dlog-lst mocho)) 130))
     (push dialog (mocho-dlog-lst mocho)) ;;リストに追加
-	  (sb-ext:run-program "/usr/bin/paplay" *sound*) ;;音ならす
+	  (sb-ext:run-program "/usr/bin/paplay" (list *sound*)) ;;音ならす
 	  (gtk-widget-show dialog) ;;ダイアログ表示
 	  ;;popuoが出た時だけ(一度だけ)カウントダウンなのでnilを返す
 	  (g-timeout-add *popup-time* (lambda () ;;時間たったらダイアログ消す
@@ -546,6 +554,7 @@
     (case (gtk-dialog-run hoge)
       (:OK
        (let ((color (gtk-color-chooser-get-rgba hoge)))
+         (setf *bg-color* color)
          (gtk-widget-override-background-color vbox1 :normal color)))
       (:cancel nil))
     (gtk-widget-destroy hoge)))
@@ -554,17 +563,19 @@
 (defun save-options ()
 	(with-open-file (out "options.dat" :direction :output
                                      :if-exists :supersede)
-		(dolist (hoge `(,*font* ,*auto-reload-time* ,*popup-time* ,*sound*))
-			(format out "~a~%" hoge))))
+		(dolist (hoge `(,*font* ,*auto-reload-time* ,*popup-time* ,*sound* ,*bg-color*))
+			(format out "~s~%" hoge))))
 
 ;;options.dat 1:font 2:オートリロード時間 3:ポップアップタイム 4:サウンド
 ;;設定読み込み TODO
 (defun load-options ()
 	(with-open-file (in "options.dat" :direction :input
                                     :if-does-not-exist nil)
-		(loop for line = (read-line in nil)
-          while line
-          do (format t "~a~%" line))))
+    (when in
+      (loop for line = (read in nil)
+            while line
+            for i in '(*font* *auto-reload-time* *popup-time* *sound* *bg-color*)
+            do (eval `(setf ,i ,line))))))
 
 
 
@@ -619,6 +630,8 @@
                                  :orientation :vertical
                                  :expand nil
                                  :spacing 6)))
+      (load-options);;初期設定読み込み
+      (gtk-widget-override-background-color vbox2 :normal *bg-color*)
       ;;menu
       ;;(gtk-menu-shell-append menu-1 font-item)
       (gtk-menu-shell-append menu-1 options-item)
