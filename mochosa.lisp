@@ -86,7 +86,8 @@
 (defun supplement-h (url)
   (if (and (> (length url) 0) (eq #\h (aref url 0)))
       url
-    (concatenate 'string "h" url)))
+      (concatenate 'string "h" url)))
+
 
 ;;h?ttps? なURLをリンクにする
 (defun linkify-urls (honbun)
@@ -457,15 +458,13 @@
 (defun make-dialog (new-res mocho vadj)
   (let* ((ress (make-res new-res))
 	       (dialog (make-instance 'gtk-message-dialog
-				                        :message-type :info
-				                        :buttons :none :use-markup t
-				                        :width-request 300
-				                        :height-request 50
-				                        :text ;;"新着メッセージ"
-				                        ;;:secondary-text
-				                        ress)))
-	  ;;新着メッセージをvbox1へ
-    ;;(make-res-2 new-res vbox1)
+                                :message-type :info
+                                :buttons :none :use-markup t
+                                :width-request 300
+                                :height-request 50
+                                :text ;;"新着メッセージ"
+                                ;;:secondary-text
+                                ress)))
 	  ;;ダイアログフォント
 	  (gtk-widget-modify-font dialog
 				                    (pango-font-description-from-string
@@ -559,6 +558,15 @@
       (:cancel nil))
     (gtk-widget-destroy hoge)))
 
+;;ポップアップサウンド設定
+(defun set-popup-sound (window)
+  (let ((hoge (gtk-file-chooser-dialog-new "sound" window :open "OK" :ok "cancel" :cancel)))
+    (gtk-file-chooser-set-current-folder hoge "/usr/share/sounds")
+    (case (gtk-dialog-run hoge)
+      (:ok (setf *sound* (gtk-file-chooser-get-filename hoge)))
+      (:cancel nil))
+    (gtk-widget-destroy hoge)))
+
 ;;設定保存
 (defun save-options ()
 	(with-open-file (out "options.dat" :direction :output
@@ -597,6 +605,7 @@
 					 (options-menu (gtk-menu-new))
 					 (font-item (gtk-menu-item-new-with-label "set Font"))
            (color-item (gtk-menu-item-new-with-label "set BG Color"))
+           (sound-item (gtk-menu-item-new-with-label "set popup sound"))
 					 (save-item (gtk-menu-item-new-with-label "save Options"))
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
            (title-label (make-instance 'gtk-label :label "URL"))
@@ -633,11 +642,11 @@
       (load-options);;初期設定読み込み
       (gtk-widget-override-background-color vbox2 :normal *bg-color*)
       ;;menu
-      ;;(gtk-menu-shell-append menu-1 font-item)
       (gtk-menu-shell-append menu-1 options-item)
 			(setf (gtk-menu-item-submenu options-item) options-menu)
 			(gtk-menu-shell-append options-menu font-item)
       (gtk-menu-shell-append options-menu color-item)
+			(gtk-menu-shell-append options-menu sound-item)
 			(gtk-menu-shell-append options-menu save-item)
       (gtk-container-add vbox2 menu-1)
       ;;font設定
@@ -655,6 +664,11 @@
 												(lambda (widget)
 													(declare (ignore widget))
 													(save-options)))
+      ;;サウンド設定
+      (g-signal-connect sound-item "activate"
+												(lambda (widget)
+													(declare (ignore widget))
+													(set-popup-sound window)))
       ;; Define the signal handlers
       (g-signal-connect window "destroy"
                         (lambda (w)
