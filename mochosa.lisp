@@ -422,9 +422,17 @@
   (let ((rawmode-urls (mapcar #'anchor-path->rawmode-url anchor-path-list))
         (output (make-string-output-stream)))
     (dolist (url rawmode-urls)
-      (dolist (dat-line (dat-lines (nth-value 0 (dex:get url))))
-        (print-res output dat-line)
-        (terpri output))) ;; 一行あける。
+      (let ((hoge (handler-case
+                      (dex:get url)
+                    (USOCKET:NS-HOST-NOT-FOUND-ERROR () 'hoge)
+                    (dex:http-request-bad-request () 'hoge)
+                    (dex:http-request-failed (e) (declare (ignore e)) 'hoge)
+                    ))
+            )
+        (when (not (eq hoge 'hoge))
+          (dolist (dat-line (dat-lines (nth-value 0 hoge)))
+            (print-res output dat-line)
+            (terpri output))))) ;; 一行あける。
     (get-output-stream-string output)))
 
 ;;DAT行のレスをGtkLabelとしてGtkBoxに追加する。
@@ -452,7 +460,13 @@
 
 ;;新着レス
 (defun get-new-res (url new-res-num)
-  (nth-value 0 (dex:get (concatenate 'string url (write-to-string new-res-num)))))
+  (let ((hoge (handler-case (dex:get (concatenate 'string url (write-to-string new-res-num)))
+                (USOCKET:NS-HOST-NOT-FOUND-ERROR () 'hoge)
+                (dex:http-request-bad-request () 'hoge)
+                (dex:http-request-failed (e) (declare (ignore e)) 'hoge)
+                )))
+    (when (not (eq hoge 'hoge))
+      (nth-value 0 hoge))))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
 (defun make-dialog (new-res mocho vadj)
@@ -713,17 +727,22 @@
            (setf url (cl-ppcre:regex-replace "read"
                                              (gtk-entry-text title-entry)
                                              "rawmode"))
-           (let ((res-list
-                   (ppcre:split "\\n"
-                                (nth-value 0 (dex:get url)))))
-             (setf (mocho-new-res-num mocho) (1+ (last-res-num res-list)))
-             (dolist (res res-list)
-               (let ((r (ppcre:split "<>" res)))
-                 (when (string-equal "1" (res-number r))
-                   (setf (gtk-window-title window)
-                         (format nil "~A - ~A" +application-name+ (res-title r))))
+           (let ((hoge (handler-case (dex:get url)
+                         (USOCKET:NS-HOST-NOT-FOUND-ERROR () 'hoge)
+                         (dex:http-request-bad-request () 'hoge)
+                         (dex:http-request-failed (e) (declare (ignore e)) 'hoge))))
+             (when (not (eq hoge 'hoge))
+               (let ((res-list
+                       (ppcre:split "\\n"
+                                    (nth-value 0 hoge))))
+                 (setf (mocho-new-res-num mocho) (1+ (last-res-num res-list)))
+                 (dolist (res res-list)
+                   (let ((r (ppcre:split "<>" res)))
+                     (when (string-equal "1" (res-number r))
+                       (setf (gtk-window-title window)
+                             (format nil "~A - ~A" +application-name+ (res-title r))))
 
-                 (make-res-2 res mocho vbox1))))
+                     (make-res-2 res mocho vbox1))))))
            (setf (gtk-switch-active l-switch) t)
            (gtk-scrolled-window-add-with-viewport scrolled vbox1)
            (g-timeout-add ;;0.5秒後に一番下にいく
