@@ -12,4 +12,4 @@
 (defparameter *font* "Sans Regular 13") ;;フォント設定　"[FAMILY-LIST] [STYLE-OPTIONS] [SIZE]"
 (defparameter *sound*
   ;;'("/usr/share/sounds/purple/receive.wav")) ;;効果音の場所
-  '("/usr/share/sounds/ubuntu/stereo/dialog-question.ogg"))
+  "/usr/share/sounds/Yaru/stereo/message-new-instant.ogg")

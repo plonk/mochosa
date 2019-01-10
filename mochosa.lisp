@@ -17,7 +17,7 @@
 (defparameter *font* "Sans Regular 13") ;;フォント設定　"[FAMILY-LIST] [STYLE-OPTIONS] [SIZE]"
 (defparameter *sound*
   ;;'("/usr/share/sounds/purple/receive.wav")) ;;効果音の場所
-  "/usr/share/sounds/ubuntu/stereo/dialog-question.ogg")
+  "/usr/share/sounds/Yaru/stereo/message-new-instant.ogg")
 (defparameter *bg-color* #S(GDK-RGBA :RED 0d0 :GREEN 0d0 :BLUE 0d0 :ALPHA 0d0))
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
@@ -469,7 +469,7 @@
       (nth-value 0 hoge))))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
-(defun make-dialog (new-res mocho vadj)
+(defun make-dialog (new-res mocho)
   (let* ((ress (make-res new-res))
 	       (dialog (make-instance 'gtk-message-dialog
                                 :message-type :info
@@ -497,12 +497,15 @@
                                                 (mocho-dlog-lst mocho) :test #'equalp))
                                   (when (mocho-dlog-lst mocho)
                                     (reset-dialog-position mocho))
-					                        nil))
-	  (g-timeout-add 300 (lambda () ;;スクロールウィンドウの一番下へ
+					                        nil))))
+;;(gtk-widget-show-all scrolled)))
+
+;;スクロールウィンドウの一番下へ
+(defun scroll-bot (vadj)
+	(g-timeout-add 600 (lambda ()
                          (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
                                                            (gtk-adjustment-page-size vadj)))
-                         nil))))
-;;(gtk-widget-show-all scrolled)))
+                         nil)))
 
 ;;カウントダウン文字列生成  改造したいところ
 (defun make-number-c (auto-time c-d-n)
@@ -538,8 +541,9 @@
     (when (> cd cdn)
       (loop for res = (get-new-res url (mocho-new-res-num mocho)) then res ;;新着あるだけ
             while (not (equal "" res))
-            do (make-dialog res mocho vadj)
+            do (make-dialog res mocho)
                (make-res-2 res mocho vbox1)
+							 (scroll-bot vadj)
                (gtk-widget-show-all scrolled)
                (incf (mocho-new-res-num mocho))
                (setf res (get-new-res url (mocho-new-res-num mocho))))
