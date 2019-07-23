@@ -405,7 +405,7 @@
   (concatenate 'string "https://jbbs.shitaraba.net"
                (ppcre:regex-replace "read\.cgi" path "rawmode.cgi")))
 
-;;ramode.cgiで取得されるDATを一行ごとのリストにする
+;;rawmode.cgiで取得されるDATを一行ごとのリストにする
 (defun dat-lines (data-text)
   (ppcre:split "\\n" data-text))
 
