@@ -2,10 +2,6 @@
 
 (ql:quickload '(:Dexador :cl-ppcre :cl-cffi-gtk))
 
-
-;;(load "setting.lisp")
-
-
 (defpackage :mochosa
   (:use :gtk :gdk :gdk-pixbuf :gobject
         :glib :gio :pango :cairo :cffi :common-lisp))
