@@ -10,16 +10,14 @@
 
 (defparameter *auto-reload-time* 9000) ;;自動読み込みの時間
 (defparameter *popup-time* 8000) ;;新着メッセージのポップアップ時間
-(defparameter *font* "Sans Regular 13") ;;フォント設定　"[FAMILY-LIST] [STYLE-OPTIONS] [SIZE]"
 (defparameter *sound*
   ;;'("/usr/share/sounds/purple/receive.wav")) ;;効果音の場所
   "/usr/share/sounds/Yaru/stereo/message-new-instant.ogg")
-(defparameter *bg-color* #S(GDK-RGBA :RED 0d0 :GREEN 0d0 :BLUE 0d0 :ALPHA 0d0))
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
 (defstruct mocho
-	(res-lst nil) ;;レスラベルリスト
+  (res-lst nil) ;;レスstructリスト
   (dlog-lst nil)
   (new-res-num 0)
   (countdown 0) ;;カウントダウン表示用
@@ -30,25 +28,35 @@
          (ftype (function (string) (values string list)) parse-untag-anchors)
          (ftype (function (string) string) linkify-urls))
 
-(defun res-number (res)
-  (first res))
-(defun res-name-html (res)
+(defstruct res
+  number
+  name
+  mail
+  date
+  honbun
+  title)
+
+(defun make-res-from-string (string)
+  (let ((fields (ppcre:split "<>" string)))
+    (make-res :number (nth 0 fields)
+              :name (nth 1 fields)
+              :mail (nth 2 fields)
+              :date (nth 3 fields)
+              :honbun (nth 4 fields)
+              :title (nth 5 fields)
+              )))
+
+(defmethod res-name-html ((r res))
   ;; 名前欄では & が &amp (←セミコロンなし)とエスケープされるので、こ
   ;; れを正しい &amp; に直す。
-  (fix-semicolonless-amp (second res)))
-(defun res-mail (res)
-  (third res))
-(defun res-date (res)
-  (fourth res))
-(defun res-honbun-html (res)
+  (fix-semicolonless-amp (res-name r)))
+
+(defmethod res-honbun-html ((r res))
   (multiple-value-bind
         (honbun path-list)
-      (parse-untag-anchors (fifth res))
+      (parse-untag-anchors (res-honbun r))
     (values (escape-stray-amp (linkify-urls honbun))
             path-list)))
-
-(defun res-title (res)
-  (sixth res))
 
 ;;文字実体参照の先頭でない、孤立したアンパサンドを &amp; に置換
 (defun escape-stray-amp (res)
@@ -58,23 +66,23 @@
   (ppcre:regex-replace-all "&amp" str "&amp;"))
 
 ;; メールのあるなしに応じて色を付けた名前のマークアップを返す。
-(defun colorized-name-html (res)
-  (if (string-equal "" (res-mail res))
+(defmethod colorized-name-html ((r res))
+  (if (string-equal "" (res-mail r))
       (format nil "<span color=\"#008800\"><b>~A</b></span>"
-              (res-name-html res))
+              (res-name-html r))
       (format nil "<span color=\"#0000FF\" underline=\"single\"><b>~A</b></span>"
-              (res-name-html res))))
+              (res-name-html r))))
 
 ;; レス全体をHTMLとして生成する。
-(defun compose-html (res)
+(defmethod compose-html ((r res))
   (multiple-value-bind
         (honbun path-list)
-      (res-honbun-html res)
+      (res-honbun-html r)
     (values
      (format nil "<span color=\"#0000FF\" underline=\"single\">~A</span>：~A：~A<br>~A<br>"
-             (res-number res)
-             (colorized-name-html res)
-             (res-date res)
+             (res-number r)
+             (colorized-name-html r)
+             (res-date r)
              honbun)
      path-list)))
 
@@ -394,10 +402,10 @@
                  (format nil "&amp;~A;" $1))))))))
 
 ;;レス作成　Pangoマークアップされた本文と、アンカーのパスリストを返す
-(defun make-res (res-string)
+(defmethod parse-res ((r res))
   (multiple-value-bind
         (html path-list)
-      (compose-html (ppcre:split "<>" res-string))
+      (compose-html r)
     (values (html->pango-markup html) path-list)))
 
 ;;アンカーのパスを該当レスを取得するrawmode.cgiへのURLに変換する
@@ -405,100 +413,87 @@
   (concatenate 'string "https://jbbs.shitaraba.net"
                (ppcre:regex-replace "read\.cgi" path "rawmode.cgi")))
 
+(defun anchor-path->range (path)
+  (multiple-value-bind
+        (match-start match-end reg-starts reg-ends)
+      (ppcre:scan "/(\\d+)(-(\\d+))?$" path)
+    (let ((left (subseq path (aref reg-starts 0) (aref reg-ends 0)))
+          (right (if (aref reg-starts 1)
+                     (subseq path (aref reg-starts 2) (aref reg-ends 2))
+                     nil)))
+      (if right
+          (list (read-from-string left) (read-from-string right))
+          (list (read-from-string left) (read-from-string left))))))
+
 ;;rawmode.cgiで取得されるDATを一行ごとのリストにする
 (defun dat-lines (data-text)
   (ppcre:split "\\n" data-text))
 
 ;;レスをPangoマークアップにしてoutput-streamに出力する
-(defun print-res (output-stream res-1)
-  (format output-stream "~A" (make-res res-1)))
+(defmethod print-res (output-stream (r res))
+  (format output-stream "~A" (parse-res r)))
 
 ;;アンカーのリストから、該当レスを取得してPangoマークアップとして整形する
-(defun make-tooltip-text (anchor-path-list)
-  (let ((rawmode-urls (mapcar #'anchor-path->rawmode-url anchor-path-list))
+(defmethod make-tooltip-text ((mocho mocho) anchor-path-list)
+  (let ((ranges (mapcar #'anchor-path->range anchor-path-list))
         (output (make-string-output-stream)))
-    (dolist (url rawmode-urls)
-      (let ((hoge (handler-case
-                      (dex:get url)
-                    (USOCKET:NS-HOST-NOT-FOUND-ERROR () 'hoge)
-                    (dex:http-request-bad-request () 'hoge)
-                    (dex:http-request-failed (e) (declare (ignore e)) 'hoge)
-                    ))
-            )
-        (when (not (eq hoge 'hoge))
-          (dolist (dat-line (dat-lines (nth-value 0 hoge)))
-            (print-res output dat-line)
-            (terpri output))))) ;; 一行あける。
+    (loop for range in ranges
+       for i from 0
+       do
+         (loop for j from (first range) upto (second range)
+            do
+              (let ((r (find-if (lambda (s) (= j (read-from-string (res-number s)))) (mocho-res-lst mocho))))
+                (when r
+                    (print-res output r)
+                    (terpri output)))))
     (get-output-stream-string output)))
 
 ;;DAT行のレスをGtkLabelとしてGtkBoxに追加する。
-(defun make-res-2 (dat-line mocho vbox1)
+(defmethod add-res ((r res) mocho vbox1)
+  (push r (mocho-res-lst mocho))
   (multiple-value-bind
         (tagged-text anchor-path-list)
-      (make-res dat-line)
+      (parse-res r)
     (let* ((new-label (make-instance
-                       'gtk-label :xalign 0.0 :selectable t :use-markup t :wrap t
+                       'gtk-label
+                       :xalign 0.0
+                       :selectable t
+                       :use-markup t
+                       :wrap t
                        :label tagged-text)))
       (when anchor-path-list
-        (setf (gtk-widget-tooltip-markup new-label) (make-tooltip-text anchor-path-list)))
-      (gtk-widget-modify-font new-label (pango-font-description-from-string *font*))
-			(push new-label (mocho-res-lst mocho)) ;;レスリストに入れる
-      (gtk-box-pack-start vbox1 new-label :expand nil))))
+        (setf (gtk-widget-tooltip-markup new-label) (make-tooltip-text mocho anchor-path-list)))
+      (gtk-box-pack-start vbox1 new-label :expand nil)
+      )))
 
 ;;ダイアログの位置を調整
 (defun reset-dialog-position (mocho)
   (loop for dialog in (reverse (mocho-dlog-lst mocho))
         for i from 0
         do (gtk-window-move dialog ;;ダイアログ表示する位置
-			                      (- (gdk-screen-width) 400)
-			                      (* i 130))
+                            (- (gdk-screen-width) 400)
+                            (* i 130))
            (gtk-widget-show dialog)))
 
 ;;新着レス
 (defun get-new-res (url new-res-num)
-  (let ((hoge (handler-case (dex:get (concatenate 'string url (write-to-string new-res-num)))
-                (USOCKET:NS-HOST-NOT-FOUND-ERROR () 'hoge)
-                (dex:http-request-bad-request () 'hoge)
-                (dex:http-request-failed (e) (declare (ignore e)) 'hoge)
-                )))
-    (when (not (eq hoge 'hoge))
-      (nth-value 0 hoge))))
+  (handler-case (dex:get (concatenate 'string url (write-to-string new-res-num)))
+    (USOCKET:NS-HOST-NOT-FOUND-ERROR () nil)
+    (dex:http-request-bad-request () nil)
+    (dex:http-request-failed (e) (declare (ignore e)) nil)
+    ))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
-(defun make-dialog (new-res mocho)
-  (let* ((ress (make-res new-res))
-	       (dialog (make-instance 'gtk-message-dialog
-                                :message-type :info
-                                :buttons :none :use-markup t
-                                :width-request 300
-                                :height-request 50
-                                :text ;;"新着メッセージ"
-                                ;;:secondary-text
-                                ress)))
-	  ;;ダイアログフォント
-	  (gtk-widget-modify-font dialog
-				                    (pango-font-description-from-string
-				                     *font*))
-	  (gtk-window-move dialog ;;ダイアログ表示する位置
-			               (- (gdk-screen-width) 400)
-			               (* (length (mocho-dlog-lst mocho)) 130))
-    (push dialog (mocho-dlog-lst mocho)) ;;リストに追加
-	  (sb-ext:run-program "/usr/bin/paplay" (list *sound*)) ;;音ならす
-	  (gtk-widget-show dialog) ;;ダイアログ表示
-	  ;;popuoが出た時だけ(一度だけ)カウントダウンなのでnilを返す
-	  (g-timeout-add *popup-time* (lambda () ;;時間たったらダイアログ消す
-					                        (gtk-widget-destroy dialog)
-                                  (setf (mocho-dlog-lst mocho)
-                                        (remove dialog
-                                                (mocho-dlog-lst mocho) :test #'equalp))
-                                  (when (mocho-dlog-lst mocho)
-                                    (reset-dialog-position mocho))
-					                        nil))))
-;;(gtk-widget-show-all scrolled)))
+(defmethod make-dialog ((r res) (mocho mocho))
+  (let* ((honbun (parse-res r)))
+    ;;ダイアログフォント
+    (sb-ext:run-program "/usr/bin/paplay" (list *sound*)) ;;音ならす
+    (sb-ext:run-program "/usr/bin/notify-send" (list "新着メッセージ" honbun))
+    ))
 
 ;;スクロールウィンドウの一番下へ
 (defun scroll-bot (vadj)
-	(g-timeout-add 600 (lambda ()
+  (g-timeout-add 600 (lambda ()
                          (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
                                                            (gtk-adjustment-page-size vadj)))
                          nil)))
@@ -527,6 +522,16 @@
     (declare (ignore reg-starts reg-ends))
     (subseq url match-start match-end)))
 
+(defun get-voicetext-license-key ()
+  (with-open-file (in "/home/plonk/.voiceapi" :direction :input)
+    (read-line in)))
+
+(defun untag-all (string)
+  (ppcre:regex-replace-all "<[^>]*>" string " "))
+
+(defmethod speak-res ((r res))
+  (sb-ext:run-program "vtsay" (list (untag-all (res-honbun r))) :search t))
+
 ;;オートリロード新着レス表示
 (defun auto-reload (url count-down-label mocho vadj scrolled hbox1 vbox1)
   (let ((cd (incf (mocho-countdown mocho)))
@@ -535,42 +540,20 @@
           (make-number-c cd cdn))
     (gtk-widget-show-all hbox1)
     (when (> cd cdn)
-      (loop for res = (get-new-res url (mocho-new-res-num mocho)) then res ;;新着あるだけ
-            while (not (equal "" res))
-            do (make-dialog res mocho)
-               (make-res-2 res mocho vbox1)
-							 (scroll-bot vadj)
-               (gtk-widget-show-all scrolled)
-               (incf (mocho-new-res-num mocho))
-               (setf res (get-new-res url (mocho-new-res-num mocho))))
+      (loop with line
+         while (not (equal "" (setf line (get-new-res url (mocho-new-res-num mocho)))))
+         do
+           (let ((r (make-res-from-string line)))
+             (make-dialog r mocho)
+             (add-res r mocho vbox1)
+             (scroll-bot vadj)
+             (gtk-widget-show-all scrolled)
+             (speak-res r)
+             (incf (mocho-new-res-num mocho))
+             ))
       (setf (mocho-countdown mocho) 1))))
 
 
-
-;;フォント設定
-(defun set-font (mocho window)
-	(let ((hoge (make-instance 'gtk-font-chooser-dialog :parent window
-                                                      :font-desc (pango-font-description-from-string *font*))))
-    (case (gtk-dialog-run hoge)
-			(:OK
-			 (let* ((font-name (gtk-font-chooser-get-font hoge))
-							(font-desc (pango-font-description-from-string font-name)))
-				 (setf *font* font-name)
-				 (dolist (res (mocho-res-lst mocho))
-					 (gtk-widget-modify-font res font-desc))))
-			(:CANCEL nil))
-    (gtk-widget-destroy hoge)))
-
-;;カラー設定
-(defun set-color (vbox1)
-  (let ((hoge (make-instance 'gtk-color-chooser-dialog)))
-    (case (gtk-dialog-run hoge)
-      (:OK
-       (let ((color (gtk-color-chooser-get-rgba hoge)))
-         (setf *bg-color* color)
-         (gtk-widget-override-background-color vbox1 :normal color)))
-      (:cancel nil))
-    (gtk-widget-destroy hoge)))
 
 ;;ポップアップサウンド設定
 (defun set-popup-sound (window)
@@ -581,26 +564,23 @@
       (:cancel nil))
     (gtk-widget-destroy hoge)))
 
+;;options.dat 1:オートリロード時間 2:ポップアップタイム 3:サウンド
 ;;設定保存
 (defun save-options ()
-	(with-open-file (out "options.dat" :direction :output
+  (with-open-file (out "options.dat" :direction :output
                                      :if-exists :supersede)
-		(dolist (hoge `(,*font* ,*auto-reload-time* ,*popup-time* ,*sound* ,*bg-color*))
-			(format out "~s~%" hoge))))
+    (dolist (value `(,*auto-reload-time* ,*popup-time* ,*sound*))
+      (format out "~s~%" value))))
 
-;;options.dat 1:font 2:オートリロード時間 3:ポップアップタイム 4:サウンド
-;;設定読み込み TODO
+;;設定読み込み
 (defun load-options ()
-	(with-open-file (in "options.dat" :direction :input
+  (with-open-file (in "options.dat" :direction :input
                                     :if-does-not-exist nil)
     (when in
       (loop for line = (read in nil)
             while line
-            for i in '(*font* *auto-reload-time* *popup-time* *sound* *bg-color*)
+            for i in '(*auto-reload-time* *popup-time* *sound*)
             do (eval `(setf ,i ,line))))))
-
-
-
 
 (defun main ()
   (within-main-loop
@@ -616,11 +596,8 @@
                                     :vscrollbar-policy :always))
            (menu-1 (gtk-menu-bar-new))
            (options-item (gtk-menu-item-new-with-label "Options"))
-					 (options-menu (gtk-menu-new))
-					 (font-item (gtk-menu-item-new-with-label "set Font"))
-           (color-item (gtk-menu-item-new-with-label "set BG Color"))
-           (sound-item (gtk-menu-item-new-with-label "set popup sound"))
-					 (save-item (gtk-menu-item-new-with-label "save Options"))
+           (options-menu (gtk-menu-new))
+           (sound-item (gtk-menu-item-new-with-label "Set Popup Sound"))
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
            (title-label (make-instance 'gtk-label :label "URL"))
            (auto-load-label (make-instance 'gtk-label :label "自動読込"))
@@ -628,9 +605,9 @@
                      (read-line in nil))) ;;前回開いたURL
 
            (title-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
-           (url nil) (mocho (make-mocho :cdn (floor *auto-reload-time* 1000)))
+           (rawmode-url nil) (mocho (make-mocho :cdn (floor *auto-reload-time* 1000)))
            (id 0) ;;(res-array (make-array 1000))
-           (button (make-instance 'gtk-button :label "読込"
+           (load-button (make-instance 'gtk-button :label "読込"
                                               :height-request 20 :width-request 40 :expnad nil))
            (l-switch (make-instance 'gtk-switch :active nil
                                                 :height-request 20 :width-request 40 :expnad nil))
@@ -654,35 +631,16 @@
                                  :expand nil
                                  :spacing 6)))
       (load-options);;初期設定読み込み
-      (gtk-widget-override-background-color vbox2 :normal *bg-color*)
       ;;menu
       (gtk-menu-shell-append menu-1 options-item)
-			(setf (gtk-menu-item-submenu options-item) options-menu)
-			(gtk-menu-shell-append options-menu font-item)
-      (gtk-menu-shell-append options-menu color-item)
-			(gtk-menu-shell-append options-menu sound-item)
-			(gtk-menu-shell-append options-menu save-item)
+      (setf (gtk-menu-item-submenu options-item) options-menu)
+      (gtk-menu-shell-append options-menu sound-item)
       (gtk-container-add vbox2 menu-1)
-      ;;font設定
-      (g-signal-connect font-item "activate"
-												(lambda (widget)
-													(declare (ignore widget))
-													(set-font mocho window)))
-      ;;back ground color設定
-      (g-signal-connect color-item "activate"
-                        (lambda (widget)
-                          (declare (ignore widget))
-                          (set-color vbox2)))
-			;;設定セーブ
-			(g-signal-connect save-item "activate"
-												(lambda (widget)
-													(declare (ignore widget))
-													(save-options)))
       ;;サウンド設定
       (g-signal-connect sound-item "activate"
-												(lambda (widget)
-													(declare (ignore widget))
-													(set-popup-sound window)))
+                        (lambda (widget)
+                          (declare (ignore widget))
+                          (set-popup-sound window)))
       ;; Define the signal handlers
       (g-signal-connect window "destroy"
                         (lambda (w)
@@ -690,11 +648,10 @@
                           (when (/= id 0)
                             (g-source-remove id))
                           (leave-gtk-main)))
-      (setf (gtk-widget-tooltip-text button) "hoge")
       (gtk-box-pack-start hbox title-label :expand nil :fill nil :padding 0)
 
       (gtk-box-pack-start hbox title-entry :expand t :fill t :padding 0)
-      (gtk-box-pack-start hbox button :expand nil :fill nil)
+      (gtk-box-pack-start hbox load-button :expand nil :fill nil)
 
       (gtk-box-pack-start hbox1 auto-load-label :expand nil :fill nil)
       (gtk-box-pack-start hbox1 l-switch :expand nil :fill nil)
@@ -707,10 +664,10 @@
        title-entry "activate"
        (lambda (widget)
          (declare (ignore widget))
-         (gtk-button-clicked button)))
+         (gtk-button-clicked load-button)))
 
       (g-signal-connect ;;読み込みボタン
-       button "clicked"
+       load-button "clicked"
        (lambda (widget)
          (declare (ignore widget))
          (when (thread-url-p (gtk-entry-text title-entry))
@@ -719,30 +676,33 @@
            (with-open-file (out "URL.dat" :direction :output
                                           :if-exists :supersede)
              (format out (gtk-entry-text title-entry))) ;;読み込んだURLを書き出す
-           (gtk-widget-destroy vbox1) ;;一回読み込んだあとにもっかい読み込むときレス消す
+
+           ;;一回読み込んだあとにもっかい読み込むときレス消す
+           (gtk-widget-destroy vbox1)
+           (setf (mocho-res-lst mocho) nil)
+
            (setf vbox1 (make-instance 'gtk-box
                                       :orientation :vertical
                                       :border-width 12
                                       :spacing 6))
-           (setf url (cl-ppcre:regex-replace "read"
+           (setf rawmode-url (cl-ppcre:regex-replace "read"
                                              (gtk-entry-text title-entry)
                                              "rawmode"))
-           (let ((hoge (handler-case (dex:get url)
-                         (USOCKET:NS-HOST-NOT-FOUND-ERROR () 'hoge)
-                         (dex:http-request-bad-request () 'hoge)
-                         (dex:http-request-failed (e) (declare (ignore e)) 'hoge))))
-             (when (not (eq hoge 'hoge))
-               (let ((res-list
-                       (ppcre:split "\\n"
-                                    (nth-value 0 hoge))))
-                 (setf (mocho-new-res-num mocho) (1+ (last-res-num res-list)))
-                 (dolist (res res-list)
-                   (let ((r (ppcre:split "<>" res)))
+           (let ((data (handler-case (dex:get rawmode-url)
+                         (USOCKET:NS-HOST-NOT-FOUND-ERROR () nil)
+                         (dex:http-request-bad-request () nil)
+                         (dex:http-request-failed (e) (declare (ignore e)) nil))))
+             (when data
+               (let ((lines (dat-lines data)))
+                 (setf (mocho-new-res-num mocho) (1+ (last-res-num lines)))
+                 (dolist (line lines)
+                   (let ((r (make-res-from-string line)))
                      (when (string-equal "1" (res-number r))
                        (setf (gtk-window-title window)
-                             (format nil "~A - ~A" +application-name+ (res-title r))))
+                             (format nil "~A - ~A" (res-title r) +application-name+)))
 
-                     (make-res-2 res mocho vbox1))))))
+                     (add-res r mocho vbox1)
+                     )))))
            (setf (gtk-switch-active l-switch) t)
            (gtk-scrolled-window-add-with-viewport scrolled vbox1)
            (g-timeout-add ;;0.5秒後に一番下にいく
@@ -759,11 +719,11 @@
        (lambda (widget param)
          (declare (ignore param))
          (if (gtk-switch-active widget) ;; t:on nil:off
-             (when url
+             (when rawmode-url
                (setf id (g-timeout-add
                          1000
                          (lambda ()
-                           (auto-reload url count-down-label mocho vadj scrolled hbox1 vbox1)
+                           (auto-reload rawmode-url count-down-label mocho vadj scrolled hbox1 vbox1)
                            (gtk-widget-show-all hbox1)
                            ;;常にカウントダウンするのでtを返す
                            t))))
@@ -783,6 +743,10 @@
       (gtk-container-add window vbox2)
       ;; Show the window
       (gtk-widget-show-all window)))
-  (join-gtk-main))
+  (unwind-protect
+       (join-gtk-main)
+
+    (save-options)
+    ))
 
 ;;(main)
