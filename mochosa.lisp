@@ -26,7 +26,8 @@
 (declaim (ftype (function (string) string) fix-semicolonless-amp)
          (ftype (function (string) string) escape-stray-amp)
          (ftype (function (string) (values string list)) parse-untag-anchors)
-         (ftype (function (string) string) linkify-urls))
+         (ftype (function (string) string) linkify-urls)
+         (ftype function untag-all))
 
 (defstruct res
   number
@@ -444,8 +445,9 @@
             do
               (let ((r (find-if (lambda (s) (= j (read-from-string (res-number s)))) (mocho-res-lst mocho))))
                 (when r
-                    (print-res output r)
-                    (terpri output)))))
+                  (terpri output)
+                  (write-string (untag-all (parse-res r)) output)
+                  ))))
     (get-output-stream-string output)))
 
 ;;DAT行のレスをGtkLabelとしてGtkBoxに追加する。
@@ -487,8 +489,8 @@
 (defmethod make-dialog ((r res) (mocho mocho))
   (let* ((honbun (parse-res r)))
     ;;ダイアログフォント
-    (sb-ext:run-program "/usr/bin/paplay" (list *sound*)) ;;音ならす
-    (sb-ext:run-program "/usr/bin/notify-send" (list "新着メッセージ" honbun))
+    (sb-ext:run-program "paplay" (list *sound*) :search t) ;;音ならす
+    (sb-ext:run-program "notify-send" (list "新着メッセージ" honbun) :search t)
     ))
 
 ;;スクロールウィンドウの一番下へ
@@ -527,7 +529,7 @@
     (read-line in)))
 
 (defun untag-all (string)
-  (ppcre:regex-replace-all "<[^>]*>" string " "))
+  (ppcre:regex-replace-all "<[^>]*>" string ""))
 
 (defmethod speak-res ((r res))
   (sb-ext:run-program "vtsay" (list (untag-all (res-honbun r))) :search t))
