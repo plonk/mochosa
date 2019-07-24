@@ -13,6 +13,7 @@
 (defparameter *sound*
   ;;'("/usr/share/sounds/purple/receive.wav")) ;;効果音の場所
   "/usr/share/sounds/Yaru/stereo/message-new-instant.ogg")
+(defparameter *say-command* "vtsay")
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
@@ -531,8 +532,15 @@
 (defun untag-all (string)
   (ppcre:regex-replace-all "<[^>]*>" string ""))
 
+(defun speak (str)
+  (let ((words (remove "" (ppcre:split "\\s+" *say-command*) :test #'string-equal)))
+    (when words
+      (handler-case
+          (sb-ext:run-program (first words) (append (rest words) (list str)) :search t)
+        (simple-error (e) (format t "~A~%" e))))))
+
 (defmethod speak-res ((r res))
-  (sb-ext:run-program "vtsay" (list (untag-all (res-honbun r))) :search t))
+  (speak (untag-all (res-honbun r))))
 
 ;;オートリロード新着レス表示
 (defun auto-reload (url count-down-label mocho vadj scrolled hbox1 vbox1)
@@ -571,7 +579,7 @@
 (defun save-options ()
   (with-open-file (out "options.dat" :direction :output
                                      :if-exists :supersede)
-    (dolist (value `(,*auto-reload-time* ,*popup-time* ,*sound*))
+    (dolist (value `(,*auto-reload-time* ,*popup-time* ,*sound* ,*say-command*))
       (format out "~s~%" value))))
 
 ;;設定読み込み
@@ -581,7 +589,7 @@
     (when in
       (loop for line = (read in nil)
             while line
-            for i in '(*auto-reload-time* *popup-time* *sound*)
+            for i in '(*auto-reload-time* *popup-time* *sound* *say-command*)
             do (eval `(setf ,i ,line))))))
 
 (defun main ()
@@ -600,6 +608,7 @@
            (options-item (gtk-menu-item-new-with-label "Options"))
            (options-menu (gtk-menu-new))
            (sound-item (gtk-menu-item-new-with-label "Set Popup Sound"))
+           (speech-item (gtk-menu-item-new-with-label "Speech..."))
            (vadj (gtk-scrolled-window-get-vadjustment scrolled))
            (title-label (make-instance 'gtk-label :label "URL"))
            (auto-load-label (make-instance 'gtk-label :label "自動読込"))
@@ -637,12 +646,40 @@
       (gtk-menu-shell-append menu-1 options-item)
       (setf (gtk-menu-item-submenu options-item) options-menu)
       (gtk-menu-shell-append options-menu sound-item)
+      (gtk-menu-shell-append options-menu speech-item)
       (gtk-container-add vbox2 menu-1)
       ;;サウンド設定
       (g-signal-connect sound-item "activate"
                         (lambda (widget)
                           (declare (ignore widget))
                           (set-popup-sound window)))
+      (g-signal-connect speech-item "activate"
+                        (lambda (widget)
+                          (declare (ignore widget))
+
+                          (let* ((dlg (gtk-dialog-new-with-buttons "読み上げ設定" window '(:modal)))
+                                 (vbox (gtk-dialog-get-content-area dlg))
+                                 (hbox (make-instance 'gtk-box :orientation :horizontal :spacing 6))
+                                 (entry (gtk-entry-new))
+                                 (test-btn (make-instance 'gtk-button :label "テスト")))
+                            (gtk-dialog-add-button dlg "gtk-cancel" :cancel)
+                            (gtk-dialog-add-button dlg "gtk-ok" :ok)
+                            (gtk-box-pack-start hbox (gtk-label-new "コマンド:") :expand nil)
+                            (gtk-box-pack-start hbox entry :expand t :fill t)
+                            (setf (gtk-entry-text entry) *say-command*)
+                            (setf (gtk-widget-tooltip-text test-btn) "現在の設定で「テスト」と読み上げます。")
+                            (gtk-box-pack-start hbox test-btn :expand nil)
+                            (g-signal-connect test-btn "clicked"
+                                              (lambda (widget)
+                                                (let ((*say-command* (gtk-entry-text entry))) ; 動的束縛
+                                                  (speak "テスト"))))
+                            (gtk-box-pack-start vbox hbox)
+                            (gtk-widget-show-all vbox)
+                            (case (gtk-dialog-run dlg)
+                              (:ok (setf *say-command* (gtk-entry-text entry))))
+                            (gtk-widget-destroy dlg)
+                            )
+                          ))
       ;; Define the signal handlers
       (g-signal-connect window "destroy"
                         (lambda (w)
