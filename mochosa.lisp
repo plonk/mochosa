@@ -463,6 +463,7 @@
                        :selectable t
                        :use-markup t
                        :wrap t
+                       :wrap-mode :word-char
                        :label tagged-text)))
       (when anchor-path-list
         (setf (gtk-widget-tooltip-markup new-label) (make-tooltip-text mocho anchor-path-list)))
