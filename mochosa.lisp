@@ -419,6 +419,7 @@
   (multiple-value-bind
         (match-start match-end reg-starts reg-ends)
       (ppcre:scan "/(\\d+)(-(\\d+))?$" path)
+    (declare (ignore match-start match-end))
     (let ((left (subseq path (aref reg-starts 0) (aref reg-ends 0)))
           (right (if (aref reg-starts 1)
                      (subseq path (aref reg-starts 2) (aref reg-ends 2))
@@ -671,7 +672,8 @@
                             (setf (gtk-widget-tooltip-text test-btn) "現在の設定で「テスト」と読み上げます。")
                             (gtk-box-pack-start hbox test-btn :expand nil)
                             (g-signal-connect test-btn "clicked"
-                                              (lambda (widget)
+                                              (lambda (w)
+                                                (declare (ignore w))
                                                 (let ((*say-command* (gtk-entry-text entry))) ; 動的束縛
                                                   (speak "テスト"))))
                             (gtk-box-pack-start vbox hbox)
