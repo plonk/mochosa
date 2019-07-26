@@ -8,12 +8,27 @@
 
 (in-package :mochosa)
 
+(defmacro do-later (&body body)
+  `(g-timeout-add
+    1
+    (lambda ()
+      ,@body
+      nil)))
+
 (defparameter *auto-reload-time* 9000) ;;自動読み込みの時間
 (defparameter *popup-time* 8000) ;;新着メッセージのポップアップ時間
 (defparameter *sound*
-  ;;'("/usr/share/sounds/purple/receive.wav")) ;;効果音の場所
   "/usr/share/sounds/Yaru/stereo/message-new-instant.ogg")
 (defparameter *say-command* "vtsay")
+
+(defparameter *auto-move* t)
+(defparameter *auto-create* nil)
+(defparameter *ac-name* "")
+(defparameter *ac-email* "sage")
+(defparameter *ac-verify* t)
+
+(defconstant +option-variables+ '(*auto-reload-time* *popup-time* *sound* *say-command*
+                                  *auto-move* *auto-create* *ac-name* *ac-email* *ac-verify*))
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
@@ -21,8 +36,8 @@
   (res-lst nil) ;;レスstructリスト
   (dlog-lst nil)
   (new-res-num 0)
-  (countdown 0) ;;カウントダウン表示用
-  (cdn 0)) ;;カウントダウン設定
+  (elapsed 0) ;;カウントダウン表示用
+  (interval 0)) ;;カウントダウン設定
 
 (declaim (ftype (function (string) string) fix-semicolonless-amp)
          (ftype (function (string) string) escape-stray-amp)
@@ -489,27 +504,22 @@
     ))
 
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
-(defmethod make-dialog ((r res) (mocho mocho))
+(defmethod notify ((r res))
   (let* ((honbun (parse-res r)))
-    ;;ダイアログフォント
-    (sb-ext:run-program "paplay" (list *sound*) :search t) ;;音ならす
-    (sb-ext:run-program "notify-send" (list "新着メッセージ" honbun) :search t)
+    (sb-ext:run-program "yomiage-send" (list "新着メッセージ" honbun) :search t)
     ))
 
 ;;スクロールウィンドウの一番下へ
 (defun scroll-bot (vadj)
-  (g-timeout-add 600 (lambda ()
-                         (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
-                                                           (gtk-adjustment-page-size vadj)))
-                         nil)))
+  (do-later
+      (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
+                                        (gtk-adjustment-page-size vadj)))))
 
 ;;カウントダウン文字列生成  改造したいところ
-(defun make-number-c (auto-time c-d-n)
-  (let ((out (make-string-output-stream)))
-    (loop for i from c-d-n downto 0
-          repeat auto-time
-          do (format out "~a " (write-to-string i)))
-    (get-output-stream-string out)))
+(defun make-number-c (elapsed interval)
+  (let ((dots (make-string elapsed :initial-element #\█))
+        (spaces (make-string (- interval elapsed) :initial-element #\░)))
+    (format nil "待機中 <span color=\"#080\">~A</span>~A" dots spaces)))
 
 (defun last-res-num (res-list)
   (when (null res-list)
@@ -527,10 +537,6 @@
     (declare (ignore reg-starts reg-ends))
     (subseq url match-start match-end)))
 
-(defun get-voicetext-license-key ()
-  (with-open-file (in "/home/plonk/.voiceapi" :direction :input)
-    (read-line in)))
-
 (defun untag-all (string)
   (ppcre:regex-replace-all "<[^>]*>" string ""))
 
@@ -544,250 +550,482 @@
 (defmethod speak-res ((r res))
   (speak (untag-all (res-honbun r))))
 
+(defun flush-draw-queue ()
+  (loop while (g-main-context-iteration (cffi:null-pointer) nil)))
+
 ;;オートリロード新着レス表示
-(defun auto-reload (url count-down-label mocho vadj scrolled hbox1 vbox1)
-  (let ((cd (incf (mocho-countdown mocho)))
-        (cdn (mocho-cdn mocho)))
-    (setf (gtk-label-label count-down-label)
-          (make-number-c cd cdn))
-    (gtk-widget-show-all hbox1)
-    (when (> cd cdn)
-      (loop with line
-         while (not (equal "" (setf line (get-new-res url (mocho-new-res-num mocho)))))
-         do
-           (let ((r (make-res-from-string line)))
-             (make-dialog r mocho)
-             (add-res r mocho vbox1)
-             (scroll-bot vadj)
-             (gtk-widget-show-all scrolled)
-             (speak-res r)
-             (incf (mocho-new-res-num mocho))
-             ))
-      (setf (mocho-countdown mocho) 1))))
-
-
-
-;;ポップアップサウンド設定
-(defun set-popup-sound (window)
-  (let ((hoge (gtk-file-chooser-dialog-new "sound" window :open "OK" :ok "cancel" :cancel)))
-    (gtk-file-chooser-set-current-folder hoge "/usr/share/sounds")
-    (case (gtk-dialog-run hoge)
-      (:ok (setf *sound* (gtk-file-chooser-get-filename hoge)))
-      (:cancel nil))
-    (gtk-widget-destroy hoge)))
+(defmethod auto-reload (url count-down-label (m mocho) vadj scrolled hbox1 vbox1)
+  (incf (mocho-elapsed m))
+  (with-slots
+        (elapsed interval new-res-num)
+      m
+    (if (>= elapsed interval)
+        (progn
+          (setf (gtk-label-label count-down-label) "新着レス確認中")
+          (do-later
+              (loop with line
+                 while (not (equal "" (setf line (get-new-res url new-res-num))))
+                 do
+                   (let ((r (make-res-from-string line)))
+                     (notify r)
+                     (add-res r m vbox1)
+                     (scroll-bot vadj)
+                     (gtk-widget-show-all scrolled)
+                     (speak-res r)
+                     (incf new-res-num)))
+            (setf elapsed 0)
+            (setf (gtk-label-label count-down-label) (make-number-c elapsed interval)))
+          )
+        (gtk-label-set-markup count-down-label (make-number-c elapsed interval)))))
 
 ;;options.dat 1:オートリロード時間 2:ポップアップタイム 3:サウンド
 ;;設定保存
 (defun save-options ()
   (with-open-file (out "options.dat" :direction :output
                                      :if-exists :supersede)
-    (dolist (value `(,*auto-reload-time* ,*popup-time* ,*sound* ,*say-command*))
-      (format out "~s~%" value))))
+    (dolist (var +option-variables+)
+      (format out "(~S ~S)~%" var (eval var)))))
 
-;;設定読み込み
+;設定読み込み
 (defun load-options ()
   (with-open-file (in "options.dat" :direction :input
                                     :if-does-not-exist nil)
     (when in
-      (loop for line = (read in nil)
-            while line
-            for i in '(*auto-reload-time* *popup-time* *sound* *say-command*)
-            do (eval `(setf ,i ,line))))))
+      (loop for pair = (read in nil)
+            while pair
+            do (eval `(setf ,(first pair) ,(second pair)))))))
 
-(defun main ()
-  (within-main-loop
-    (let* ((window (make-instance 'gtk-window
-                                  :type :toplevel
-                                  :title +application-name+
-                                  :border-width 6
-                                  :width-request 550
-                                  :height-request 500))
-           (scrolled (make-instance 'gtk-scrolled-window
-                                    :border-width 0
-                                    :hscrollbar-policy :automatic
-                                    :vscrollbar-policy :always))
-           (menu-1 (gtk-menu-bar-new))
-           (options-item (gtk-menu-item-new-with-label "Options"))
-           (options-menu (gtk-menu-new))
-           (sound-item (gtk-menu-item-new-with-label "Set Popup Sound"))
-           (speech-item (gtk-menu-item-new-with-label "Speech..."))
-           (vadj (gtk-scrolled-window-get-vadjustment scrolled))
-           (title-label (make-instance 'gtk-label :label "URL"))
-           (auto-load-label (make-instance 'gtk-label :label "自動読込"))
-           (preurl (with-open-file (in "URL.dat" :direction :input)
-                     (read-line in nil))) ;;前回開いたURL
+(defun save-url (url)
+  (with-open-file (out "URL.dat" :direction :output
+                       :if-exists :supersede)
+    (format out url)))
 
-           (title-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
-           (rawmode-url nil) (mocho (make-mocho :cdn (floor *auto-reload-time* 1000)))
-           (id 0) ;;(res-array (make-array 1000))
-           (load-button (make-instance 'gtk-button :label "読込"
-                                              :height-request 20 :width-request 40 :expnad nil))
-           (l-switch (make-instance 'gtk-switch :active nil
-                                                :height-request 20 :width-request 40 :expnad nil))
-           (load-label (make-instance 'gtk-label :label "読み込み中"
-                                                 :rgba (gdk-rgba-parse "Blue") ))
-           (count-down-label (make-instance 'gtk-label :label "(´・ω・｀)" :xalign 0.0))
-           (test-btn (make-instance 'gtk-button :label "最新レス"
-                                                :height-request 20 :width-request 40 :expnad nil))
-           (vbox1 (make-instance 'gtk-box ;;レス表示部分
+(defun load-url ()
+  (with-open-file (in "URL.dat" :direction :input)
+    (read-line in nil)))
+
+(defclass thread-chooser (gtk-dialog)
+  (list-store
+   tree-view)
+  (:metaclass gobject:gobject-class))
+
+(defclass main-window (gtk-window)
+  ((id :initform 0 :accessor main-window-id)
+   (url-entry :accessor main-window-url-entry)
+   (load-switch :accessor main-window-load-switch))
+  (:metaclass gobject:gobject-class))
+
+(defclass options-dialog (gtk-dialog)
+  (auto-move-check-button
+   auto-create-check-button
+   ac-name-entry
+   ac-email-entry
+   ac-verify-check-button)
+  (:metaclass gobject:gobject-class))
+
+(defmethod main-window-quit ((w main-window))
+  (when (/= (main-window-id w) 0)
+    (g-source-remove (main-window-id w)))
+  (leave-gtk-main))
+
+  ;; (let* ((dlg (gtk-dialog-new-with-buttons "設定" window '(:modal)))
+  ;;        (vbox (gtk-dialog-get-content-area dlg))
+  ;;        (top-hbox (make-instance 'gtk-box :orientation :horizontal :spacing 6))
+  ;;        (entry (gtk-entry-new))
+  ;;        (test-btn (make-instance 'gtk-button :label "テスト")))
+
+  ;;   (gtk-dialog-add-button dlg "gtk-cancel" :cancel)
+  ;;   (gtk-dialog-add-button dlg "gtk-ok" :ok)
+  ;;   (gtk-box-pack-start top-hbox (gtk-label-new "コマンド:") :expand nil)
+  ;;   (gtk-box-pack-start top-hbox entry :expand t :fill t)
+  ;;   (setf (gtk-entry-text entry) *say-command*)
+  ;;   (setf (gtk-widget-tooltip-text test-btn) "「テスト」と読み上げます。")
+  ;;   (gtk-box-pack-start top-hbox test-btn :expand nil)
+  ;;   (g-signal-connect test-btn "clicked"
+  ;;                     (lambda (w)
+  ;;                       (declare (ignore w))
+  ;;                       (let ((*say-command* (gtk-entry-text entry))) ; 動的束縛
+  ;;                         (speak "テスト"))))
+  ;;   (gtk-box-pack-start vbox top-hbox)
+  ;;   (gtk-widget-show-all vbox)
+  ;;   (case (gtk-dialog-run dlg)
+  ;;     (:ok (setf *say-command* (gtk-entry-text entry))))
+  ;;   (gtk-widget-destroy dlg)
+(defmethod initialize-instance :after ((dlg options-dialog) &key transient-for)
+  (let* ((vbox (gtk-dialog-get-content-area dlg)))
+    (setf (gtk-window-transient-for dlg) transient-for)
+    (setf (gtk-widget-size-request dlg) '(320 240))
+    (setf (gtk-window-title dlg) "設定")
+
+    (gtk-dialog-add-button dlg "gtk-cancel" :cancel)
+    (gtk-dialog-add-button dlg "gtk-ok" :ok)
+
+    ;; (gtk-box-pack-start vbox (gtk-frame-new "スレ移動"))
+    ;; (gtk-box-pack-start vbox (gtk-frame-new "スレ立て"))
+
+    (with-slots (auto-move-check-button
+                 auto-create-check-button
+                 ac-name-entry
+                 ac-email-entry
+                 ac-verify-check-button)
+        dlg
+      (setf (gtk-box-spacing vbox) 6)
+      (setf (gtk-widget-margin vbox) 6)
+      (gtk-box-pack-start vbox (let ((cb (gtk-check-button-new-with-label "自動スレ移動")))
+                                 (setq auto-move-check-button cb)) :expand nil)
+      (gtk-box-pack-start vbox (let ((cb (gtk-check-button-new-with-label "自動スレ立て")))
+                                 (setq auto-create-check-button cb)) :expand nil)
+      (gtk-box-pack-start vbox
+                          (let ((hbox (make-instance 'gtk-box :orientation :horizontal)))
+                            (gtk-box-pack-start hbox (gtk-label-new "名前"))
+                            (gtk-box-pack-start hbox (let ((e (gtk-entry-new)))
+                                                       (setq ac-name-entry e)
+                                                       ;;(setf (gtk-entry-visibility e) nil)
+                                                       e))
+                            ;;(gtk-box-pack-start hbox (gtk-check-button-new-with-label "👁"))
+                            hbox) :expand nil)
+      (gtk-box-pack-start vbox
+                          (let ((hbox (make-instance 'gtk-box :orientation :horizontal)))
+                            (gtk-box-pack-start hbox (gtk-label-new "E-mail"))
+                            (gtk-box-pack-start hbox (let ((e (gtk-entry-new)))
+                                                       (setq ac-email-entry e)
+                                                       ;;(setf (gtk-entry-visibility e) nil)
+                                                       e))
+                            ;;(gtk-box-pack-start hbox (gtk-check-button-new-with-label "👁"))
+                            hbox) :expand nil)
+      (gtk-box-pack-start vbox
+                          (let ((cb (gtk-check-button-new-with-label "投稿内容を確認")))
+                            (setq ac-verify-check-button cb)
+                            ;;(setf (gtk-widget-tooltip-text cb) "自動スレ立て時にダイアログボックスを開きます。")
+                            cb
+                            ) :expand nil)
+
+      (gtk-widget-show-all vbox)
+      )))
+
+(defmethod main-window-open-options ((window main-window))
+  (let ((dlg (make-instance 'options-dialog :transient-for window)))
+    (with-slots (auto-move-check-button
+                 auto-create-check-button
+                 ac-name-entry
+                 ac-email-entry
+                 ac-verify-check-button)
+        dlg
+      (setf (gtk-toggle-button-active auto-move-check-button)   *auto-move*)
+      (setf (gtk-toggle-button-active auto-create-check-button) *auto-create*)
+      (setf (gtk-entry-text ac-name-entry)                      *ac-name*)
+      (setf (gtk-entry-text ac-email-entry)                     *ac-email*)
+      (setf (gtk-toggle-button-active ac-verify-check-button)   *ac-verify*)
+
+      (case (gtk-dialog-run dlg)
+        (:ok
+         (setf *auto-move*   (gtk-toggle-button-active auto-move-check-button))
+         (setf *auto-create* (gtk-toggle-button-active auto-create-check-button))
+         (setf *ac-name*     (gtk-entry-text ac-name-entry))
+         (setf *ac-email*    (gtk-entry-text ac-email-entry))
+         (setf *ac-verify*   (gtk-toggle-button-active ac-verify-check-button))
+         )
+        (:cancel))
+      )
+    (gtk-widget-destroy dlg)))
+
+;; スレッド一覧。文字列のリスト、(スレタイ レス数 スレッドID) を要素と
+;; するリストを返す。
+(defun get-subjects (board)
+  ;; したらばのsubject.txtにcharsetが指定されておらず、自動的に文字列
+  ;; 化できないので、バイナリでダウンロードして文字列に変換する。
+  (loop
+     with subjects = nil
+     with binary = (dex:get (format nil "https://jbbs.shitaraba.net/~A/subject.txt" board) :force-binary t)
+     for line in (ppcre:split "\\n"
+                              (babel:octets-to-string binary :encoding :eucjp))
+     finally (return (nreverse (remove-duplicates subjects :test #'equal))) ; 最後にトップスレが追加されるのを削除
+     do
+       (multiple-value-bind
+             (match-start match-end reg-starts reg-ends)
+           (ppcre:scan "^(\\d+)\\.cgi,(.+)\\((\\d+)\\)$" line)
+         (declare (ignore match-start match-end))
+         (let ((id (subseq line (aref reg-starts 0) (aref reg-ends 0)))
+               (title (subseq line (aref reg-starts 1) (aref reg-ends 1)))
+               (nores (subseq line (aref reg-starts 2) (aref reg-ends 2))))
+           (push (list title nores id) subjects)))))
+
+(defmethod initialize-instance :after ((dlg thread-chooser) &key board)
+  (let ((vbox (gtk-dialog-get-content-area dlg)))
+
+    (setf (gtk-widget-size-request dlg) '(320 480))
+
+    (gtk-dialog-add-button dlg "gtk-ok" :ok)
+    (gtk-dialog-add-button dlg "gtk-cancel" :cancel)
+
+    (let* ((subjects (get-subjects board))
+           ;; Create a new list store with three columns
+           (list-store (make-instance 'gtk-list-store
+                                      :column-types
+                                      '("gchararray" "gchararray" "gchararray")))
+           (tree-view (make-instance 'gtk-tree-view :model list-store)))
+
+      (setf (slot-value dlg 'list-store) list-store)
+      (setf (slot-value dlg 'tree-view) tree-view)
+
+      ;; タイトル レス数 [スレッドID]
+      (loop for subject in subjects
+         do
+           (gtk-list-store-set list-store
+                               (gtk-list-store-append list-store)
+                               (nth 0 subject)
+                               (nth 1 subject)
+                               (nth 2 subject)
+                               ))
+
+      (let* ((renderer (gtk-cell-renderer-text-new))
+             (column (gtk-tree-view-column-new-with-attributes "タイトル" renderer "text" 0)))
+        (gtk-tree-view-append-column tree-view column))
+      (let* ((renderer (gtk-cell-renderer-text-new))
+             (column (gtk-tree-view-column-new-with-attributes "レス" renderer "text" 1)))
+        (gtk-tree-view-append-column tree-view column))
+
+      (let ((scrolled-window (make-instance 'gtk-scrolled-window
+                                            :border-width 0
+                                            :hscrollbar-policy :automatic
+                                            :vscrollbar-policy :always)))
+        (gtk-container-add scrolled-window tree-view)
+        (gtk-box-pack-start vbox scrolled-window))
+      (g-signal-connect
+       tree-view
+       "row-activated"
+       (lambda (tree-view path column)
+         (declare (ignore tree-view path column))
+         (gtk-dialog-response dlg :ok)
+         ))
+
+      (gtk-widget-show-all vbox)
+      )))
+
+(defmethod main-window-open-thread ((window main-window) board)
+
+  (let* ((dlg (make-instance 'thread-chooser :title "スレッド一覧" :board board)))
+    (setf (gtk-window-transient-for dlg) window)
+    (case (gtk-dialog-run dlg)
+      (:ok
+       (let ((selection (gtk-tree-view-get-selection (slot-value dlg 'tree-view))))
+         (let ((iter (gtk-tree-selection-get-selected selection)))
+           (when iter
+             (let ((thread (first (gtk-tree-model-get (slot-value dlg 'list-store) iter 2))))
+               (main-window-start window board thread))))))
+      (:cancel nil))
+    (gtk-widget-destroy dlg)))
+
+(defmethod main-window-start ((window main-window) board thread)
+  (setf (gtk-switch-active (main-window-load-switch window)) nil)
+  (setf (gtk-entry-text (main-window-url-entry window))
+        (format nil "https://jbbs.shitaraba.net/bbs/read.cgi/~A/~A/" board thread))
+  (setf (gtk-switch-active (main-window-load-switch window)) t))
+
+(defmethod initialize-instance :after ((window main-window) &key)
+  (let* (
+         (preurl (load-url)) ;;前回開いたURL
+         (rawmode-url nil) (mocho (make-mocho :interval (floor *auto-reload-time* 1000)))
+         ;; ウィジェット
+         (scrolled (make-instance 'gtk-scrolled-window
+                                  :border-width 0
+                                  :hscrollbar-policy :automatic
+                                  :vscrollbar-policy :always))
+         (menu-bar (gtk-menu-bar-new))
+
+         (file-menu-item (gtk-menu-item-new-with-label "ファイル"))
+         (file-menu (gtk-menu-new))
+         (quit-menu-item (gtk-menu-item-new-with-label "終了"))
+
+         (tools-menu-item (gtk-menu-item-new-with-label "ツール"))
+         (tools-menu (gtk-menu-new))
+         (open-thread-menu-item (gtk-menu-item-new-with-label "スレッドを開く..."))
+         (post-menu-item (gtk-menu-item-new-with-label "投稿..."))
+         (new-thread-menu-item (gtk-menu-item-new-with-label "スレッド作成..."))
+
+         (options-menu-item (gtk-menu-item-new-with-label "設定"))
+         (options-menu (gtk-menu-new))
+         (general-menu-item (gtk-menu-item-new-with-label "全般"))
+         (notify-menu-item (gtk-menu-item-new-with-label "通知"))
+
+         (vadj (gtk-scrolled-window-get-vadjustment scrolled))
+         (title-label (make-instance 'gtk-label :label "URL"))
+
+         (url-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
+         (load-switch (make-instance 'gtk-switch :active nil
+                                     :height-request 20 :width-request 40 :expand nil))
+         (status-label (make-instance 'gtk-label :label "停止中" :xalign 0.0))
+         (new-res-btn (make-instance 'gtk-button :label "最新レス"
+                                     :height-request 20 :width-request 40 :expand nil))
+         (tl-vbox (make-instance 'gtk-box ;;レス表示部分
                                  :orientation :vertical
                                  :border-width 12
                                  :spacing 6))
-           (hbox1 (make-instance 'gtk-box ;;オートリロードしてるとこ
-                                 :orientation :horizontal
-                                 :spacing 6 :expand nil))
-           (hbox (make-instance 'gtk-box ;;URLとか
-                                :orientation :horizontal
-                                :spacing 6 :expand nil))
-           (vbox2 (make-instance 'gtk-box ;;vbox1とhbox1とhboxいれてる？
-                                 :orientation :vertical
-                                 :expand nil
-                                 :spacing 6)))
-      (load-options);;初期設定読み込み
-      ;;menu
-      (gtk-menu-shell-append menu-1 options-item)
-      (setf (gtk-menu-item-submenu options-item) options-menu)
-      (gtk-menu-shell-append options-menu sound-item)
-      (gtk-menu-shell-append options-menu speech-item)
-      (gtk-container-add vbox2 menu-1)
-      ;;サウンド設定
-      (g-signal-connect sound-item "activate"
-                        (lambda (widget)
-                          (declare (ignore widget))
-                          (set-popup-sound window)))
-      (g-signal-connect speech-item "activate"
-                        (lambda (widget)
-                          (declare (ignore widget))
+         (top-hbox (make-instance 'gtk-box ;;URLとか
+                                  :orientation :horizontal
+                                  :spacing 6 :expand nil))
+         (bottom-hbox (make-instance 'gtk-box ;;ステータスエリア
+                                     :orientation :horizontal
+                                     :spacing 6 :expand nil))
+         (win-vbox (make-instance 'gtk-box
+                                  :orientation :vertical
+                                  :expand nil
+                                  :spacing 6)))
+    (setf (main-window-url-entry window) url-entry)
+    (setf (main-window-load-switch window) load-switch)
 
-                          (let* ((dlg (gtk-dialog-new-with-buttons "読み上げ設定" window '(:modal)))
-                                 (vbox (gtk-dialog-get-content-area dlg))
-                                 (hbox (make-instance 'gtk-box :orientation :horizontal :spacing 6))
-                                 (entry (gtk-entry-new))
-                                 (test-btn (make-instance 'gtk-button :label "テスト")))
-                            (gtk-dialog-add-button dlg "gtk-cancel" :cancel)
-                            (gtk-dialog-add-button dlg "gtk-ok" :ok)
-                            (gtk-box-pack-start hbox (gtk-label-new "コマンド:") :expand nil)
-                            (gtk-box-pack-start hbox entry :expand t :fill t)
-                            (setf (gtk-entry-text entry) *say-command*)
-                            (setf (gtk-widget-tooltip-text test-btn) "現在の設定で「テスト」と読み上げます。")
-                            (gtk-box-pack-start hbox test-btn :expand nil)
-                            (g-signal-connect test-btn "clicked"
-                                              (lambda (w)
-                                                (declare (ignore w))
-                                                (let ((*say-command* (gtk-entry-text entry))) ; 動的束縛
-                                                  (speak "テスト"))))
-                            (gtk-box-pack-start vbox hbox)
-                            (gtk-widget-show-all vbox)
-                            (case (gtk-dialog-run dlg)
-                              (:ok (setf *say-command* (gtk-entry-text entry))))
-                            (gtk-widget-destroy dlg)
-                            )
-                          ))
+    ;;menu
+      (gtk-container-add win-vbox menu-bar)
+
+      ;; File
+      (gtk-menu-shell-append menu-bar file-menu-item)
+      (setf (gtk-menu-item-submenu file-menu-item) file-menu)
+      (gtk-menu-shell-append file-menu quit-menu-item)
+
+      ;;Tools
+      (gtk-menu-shell-append menu-bar tools-menu-item)
+      (setf (gtk-menu-item-submenu tools-menu-item) tools-menu)
+      (gtk-menu-shell-append tools-menu open-thread-menu-item)
+      (gtk-menu-shell-append tools-menu (gtk-separator-menu-item-new))
+      (gtk-menu-shell-append tools-menu post-menu-item)
+      (gtk-menu-shell-append tools-menu new-thread-menu-item)
+
+      ;;Options
+      (gtk-menu-shell-append menu-bar options-menu-item)
+      (setf (gtk-menu-item-submenu options-menu-item) options-menu)
+      (gtk-menu-shell-append options-menu general-menu-item)
+      (gtk-menu-shell-append options-menu notify-menu-item)
+
+      (g-signal-connect
+       quit-menu-item
+       "activate"
+       (lambda (widget)
+         (declare (ignore widget))
+         (main-window-quit window)))
+
+      (g-signal-connect
+       open-thread-menu-item
+       "activate"
+       (lambda (widget)
+         (declare (ignore widget))
+         (multiple-value-bind
+               (match-start match-end reg-starts reg-ends)
+             (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/([a-z]+/\\d+)/\\d+/" (gtk-entry-text url-entry))
+           (declare (ignore match-end))
+           (when match-start
+             (let ((board (subseq (gtk-entry-text url-entry) (aref reg-starts 0) (aref reg-ends 0))))
+               (main-window-open-thread window board))))))
+
+      (g-signal-connect
+       general-menu-item
+       "activate"
+       (lambda (widget) (declare (ignore widget))
+               (main-window-open-options window)))
+
       ;; Define the signal handlers
       (g-signal-connect window "destroy"
-                        (lambda (w)
-                          (declare (ignore w))
-                          (when (/= id 0)
-                            (g-source-remove id))
-                          (leave-gtk-main)))
-      (gtk-box-pack-start hbox title-label :expand nil :fill nil :padding 0)
+                        #'main-window-quit)
+      (gtk-box-pack-start top-hbox title-label :expand nil :fill nil :padding 0)
 
-      (gtk-box-pack-start hbox title-entry :expand t :fill t :padding 0)
-      (gtk-box-pack-start hbox load-button :expand nil :fill nil)
+      (gtk-box-pack-start top-hbox url-entry :expand t :fill t :padding 0)
+      (gtk-box-pack-start top-hbox load-switch :expand nil :fill nil)
 
-      (gtk-box-pack-start hbox1 auto-load-label :expand nil :fill nil)
-      (gtk-box-pack-start hbox1 l-switch :expand nil :fill nil)
-      (gtk-box-pack-start hbox1 load-label :expand nil :fill nil)
-      (gtk-box-pack-start hbox1 count-down-label :expand t :fill t )
-      (gtk-box-pack-start hbox1 test-btn :expand nil :fill nil)
-      (gtk-box-pack-start vbox2 hbox :expand nil :fill nil)
+      (gtk-box-pack-start bottom-hbox status-label :expand t :fill t )
+      (gtk-box-pack-start bottom-hbox new-res-btn :expand nil :fill nil)
+      (gtk-box-pack-start win-vbox top-hbox :expand nil :fill nil)
 
       (g-signal-connect
-       title-entry "activate"
+       url-entry "activate"
        (lambda (widget)
          (declare (ignore widget))
-         (gtk-button-clicked load-button)))
+         (setf (gtk-switch-active load-switch) t)))
 
-      (g-signal-connect ;;読み込みボタン
-       load-button "clicked"
-       (lambda (widget)
-         (declare (ignore widget))
-         (when (thread-url-p (gtk-entry-text title-entry))
-           (setf (gtk-entry-text title-entry)
-                 (normalize-thread-url (gtk-entry-text title-entry)))
-           (with-open-file (out "URL.dat" :direction :output
-                                          :if-exists :supersede)
-             (format out (gtk-entry-text title-entry))) ;;読み込んだURLを書き出す
-
-           ;;一回読み込んだあとにもっかい読み込むときレス消す
-           (gtk-widget-destroy vbox1)
-           (setf (mocho-res-lst mocho) nil)
-
-           (setf vbox1 (make-instance 'gtk-box
-                                      :orientation :vertical
-                                      :border-width 12
-                                      :spacing 6))
-           (setf rawmode-url (cl-ppcre:regex-replace "read"
-                                             (gtk-entry-text title-entry)
-                                             "rawmode"))
-           (let ((data (handler-case (dex:get rawmode-url)
-                         (USOCKET:NS-HOST-NOT-FOUND-ERROR () nil)
-                         (dex:http-request-bad-request () nil)
-                         (dex:http-request-failed (e) (declare (ignore e)) nil))))
-             (when data
-               (let ((lines (dat-lines data)))
-                 (setf (mocho-new-res-num mocho) (1+ (last-res-num lines)))
-                 (dolist (line lines)
-                   (let ((r (make-res-from-string line)))
-                     (when (string-equal "1" (res-number r))
-                       (setf (gtk-window-title window)
-                             (format nil "~A - ~A" (res-title r) +application-name+)))
-
-                     (add-res r mocho vbox1)
-                     )))))
-           (setf (gtk-switch-active l-switch) t)
-           (gtk-scrolled-window-add-with-viewport scrolled vbox1)
-           (g-timeout-add ;;0.5秒後に一番下にいく
-            500
-            (lambda ()
-              (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
-                                                (gtk-adjustment-page-size vadj)))
-              nil))
-           (gtk-widget-show-all scrolled))))
       ;;スイッチ オートリロード
       (g-signal-connect
-       l-switch
+       load-switch
        "notify::active"
        (lambda (widget param)
          (declare (ignore param))
+
          (if (gtk-switch-active widget) ;; t:on nil:off
-             (when rawmode-url
-               (setf id (g-timeout-add
-                         1000
-                         (lambda ()
-                           (auto-reload rawmode-url count-down-label mocho vadj scrolled hbox1 vbox1)
-                           (gtk-widget-show-all hbox1)
-                           ;;常にカウントダウンするのでtを返す
-                           t))))
-             (when (/= 0 id) ;;わからん オートリロード止めるはず
-               (g-source-remove id)
-               (setf (mocho-countdown mocho) 1)))))
+             (if (thread-url-p (gtk-entry-text url-entry))
+                 (progn
+                   (setf (gtk-entry-text url-entry)
+                         (normalize-thread-url (gtk-entry-text url-entry)))
+                   (save-url (gtk-entry-text url-entry))
+
+                   ;;一回読み込んだあとにもっかい読み込むときレス消す
+                   (gtk-widget-destroy tl-vbox)
+                   (setf (mocho-res-lst mocho) nil)
+
+                   (setf tl-vbox (make-instance 'gtk-box
+                                                      :orientation :vertical
+                                                      :border-width 12
+                                                      :spacing 6))
+                   (setf rawmode-url (cl-ppcre:regex-replace "read"
+                                                             (gtk-entry-text url-entry)
+                                                             "rawmode"))
+                   (gtk-label-set-markup status-label "スレッド読み込み中")
+                   (do-later
+                       ;; 読み込み処理開始。
+                       (let ((data (handler-case (dex:get rawmode-url)
+                                     (USOCKET:NS-HOST-NOT-FOUND-ERROR () nil)
+                                     (dex:http-request-bad-request () nil)
+                                     (dex:http-request-failed (e) (declare (ignore e)) nil))))
+                         (when data
+                           (let ((lines (dat-lines data)))
+                             (setf (mocho-new-res-num mocho) (1+ (last-res-num lines)))
+                             (dolist (line lines)
+                               (let ((r (make-res-from-string line)))
+                                 (when (string-equal "1" (res-number r))
+                                   (setf (gtk-window-title window)
+                                         (format nil "~A - ~A" (res-title r) +application-name+)))
+
+                                 (add-res r mocho tl-vbox)
+                                 )))))
+                     (gtk-scrolled-window-add-with-viewport scrolled tl-vbox)
+                     (gtk-widget-show-all scrolled)
+                     (setf (main-window-id window) (g-timeout-add
+                               1000
+                               (lambda ()
+                                 (auto-reload rawmode-url status-label mocho vadj scrolled bottom-hbox tl-vbox)
+                                 ;;常にカウントダウンするのでtを返す
+                                 t)))
+                     (do-later
+                         (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
+                                                           (gtk-adjustment-page-size vadj))))))
+                 (progn ; else
+                   (setf (gtk-switch-active load-switch) nil)
+                   (gtk-label-set-markup status-label "<span color=\"#800\">エラー</span>: スレッドのURLではありません")))
+             (when (/= 0 (main-window-id window)) ;;わからん オートリロード止めるはず
+               (g-source-remove (main-window-id window))
+               (setf (main-window-id window) 0)
+               (setf (mocho-elapsed mocho) 0)
+               (gtk-label-set-markup status-label "停止中")))))
       (g-signal-connect ;;最新レスへ スクロールウィンドウの一番下に行く
-       test-btn
+       new-res-btn
        "clicked"
        (lambda (widget)
          (declare (ignore widget))
          (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
                                            (gtk-adjustment-page-size vadj)))))
-      (gtk-box-pack-start vbox2 scrolled)
-      (gtk-box-pack-start vbox2 hbox1 :expand nil :fill nil)
-      ;; Put the table into the window
-      (gtk-container-add window vbox2)
-      ;; Show the window
+      (gtk-box-pack-start win-vbox scrolled)
+      (gtk-box-pack-start win-vbox bottom-hbox :expand nil :fill nil)
+      (gtk-container-add window win-vbox)
+  ))
+
+(defun main ()
+  (load-options);;初期設定読み込み
+  (within-main-loop
+    (let* ((window (make-instance 'main-window
+                                  :type :toplevel
+                                  :title +application-name+
+                                  :border-width 6
+                                  :width-request 550
+                                  :height-request 500)))
       (gtk-widget-show-all window)))
   (unwind-protect
        (join-gtk-main)
-
     (save-options)
     ))
 
