@@ -418,6 +418,17 @@
                  (format nil "&#~A;" code-point)
                  (format nil "&amp;~A;" $1))))))))
 
+(defun decode-numeric-character-references (str)
+  (ppcre:regex-replace-all
+   "&#(x[0-9A-Fa-f]+|\\d+);" str
+   (lambda (target-string start end match-start match-end reg-starts reg-ends)
+     (declare (ignore start end))
+     (let* (($1 (subseq target-string (aref reg-starts 0) (aref reg-ends 0)))
+            (code (if (eql #\x (aref $1 0)) ; x 大文字でもいい!？
+                      (parse-integer (subseq $1 1) :radix 16)
+                      (parse-integer $1 :radix 10))))
+       (format nil "~A" (code-char code))))))
+
 ;;レス作成　Pangoマークアップされた本文と、アンカーのパスリストを返す
 (defmethod parse-res ((r res))
   (multiple-value-bind
@@ -506,7 +517,7 @@
 ;;新着メッセージ生成と新着メッセージのポップアップ生成
 (defmethod notify ((r res))
   (let* ((honbun (parse-res r)))
-    (sb-ext:run-program "yomiage-send" (list "新着メッセージ" honbun) :search t)
+    (sb-ext:run-program "yomiage-send" (list "新着メッセージ" (decode-numeric-character-references honbun)) :search t)
     ))
 
 ;;スクロールウィンドウの一番下へ
@@ -548,7 +559,7 @@
         (simple-error (e) (format t "~A~%" e))))))
 
 (defmethod speak-res ((r res))
-  (speak (untag-all (res-honbun r))))
+  (speak (decode-numeric-character-references (untag-all (res-honbun r)))))
 
 (defun flush-draw-queue ()
   (loop while (g-main-context-iteration (cffi:null-pointer) nil)))
@@ -822,55 +833,85 @@
         (format nil "https://jbbs.shitaraba.net/bbs/read.cgi/~A/~A/" board thread))
   (setf (gtk-switch-active (main-window-load-switch window)) t))
 
+(defun next-thread-title (title)
+  (let* ((tokens (nreverse (ppcre:all-matches-as-strings "\\d+|[^\\d]+" title)))
+         (pos (position-if (lambda (token) (ppcre:scan "^\\d+$" token)) tokens)))
+    (if pos
+        (progn
+          (setf (car (nthcdr pos tokens)) (write-to-string (1+ (read-from-string (nth pos tokens)))))
+          (format nil "~{~A~}" (nreverse tokens)))
+        nil)))
+
+(defun next-thread (current-title subjects)
+  (let ((target (next-thread-title current-title)))
+    (unless target
+      (return-from next-thread nil))
+
+    (loop for subject in subjects
+       do
+         (destructuring-bind (title nores id)
+             subject
+           (when (string-equal title target)
+             (return-from next-thread subject))))
+    nil))
+
 (defmethod initialize-instance :after ((window main-window) &key)
   (let* (
          (preurl (load-url)) ;;前回開いたURL
          (rawmode-url nil) (mocho (make-mocho :interval (floor *auto-reload-time* 1000)))
+
          ;; ウィジェット
-         (scrolled (make-instance 'gtk-scrolled-window
-                                  :border-width 0
-                                  :hscrollbar-policy :automatic
-                                  :vscrollbar-policy :always))
-         (menu-bar (gtk-menu-bar-new))
-
-         (file-menu-item (gtk-menu-item-new-with-label "ファイル"))
-         (file-menu (gtk-menu-new))
-         (quit-menu-item (gtk-menu-item-new-with-label "終了"))
-
-         (tools-menu-item (gtk-menu-item-new-with-label "ツール"))
-         (tools-menu (gtk-menu-new))
+         (scrolled     (make-instance 'gtk-scrolled-window
+                                      :border-width 0
+                                      :hscrollbar-policy :automatic
+                                      :vscrollbar-policy :always))
+         (menu-bar              (gtk-menu-bar-new))
+         (file-menu-item        (gtk-menu-item-new-with-label "ファイル"))
+         (file-menu             (gtk-menu-new))
+         (quit-menu-item        (gtk-menu-item-new-with-label "終了"))
+         (tools-menu-item       (gtk-menu-item-new-with-label "ツール"))
+         (tools-menu            (gtk-menu-new))
          (open-thread-menu-item (gtk-menu-item-new-with-label "スレッドを開く..."))
-         (post-menu-item (gtk-menu-item-new-with-label "投稿..."))
-         (new-thread-menu-item (gtk-menu-item-new-with-label "スレッド作成..."))
-
-         (options-menu-item (gtk-menu-item-new-with-label "設定"))
-         (options-menu (gtk-menu-new))
-         (general-menu-item (gtk-menu-item-new-with-label "全般"))
-         (notify-menu-item (gtk-menu-item-new-with-label "通知"))
-
-         (vadj (gtk-scrolled-window-get-vadjustment scrolled))
-         (title-label (make-instance 'gtk-label :label "URL"))
-
-         (url-entry (make-instance 'gtk-entry :text (if (null preurl) "" preurl) :width-request 400))
-         (load-switch (make-instance 'gtk-switch :active nil
-                                     :height-request 20 :width-request 40 :expand nil))
-         (status-label (make-instance 'gtk-label :label "停止中" :xalign 0.0))
-         (new-res-btn (make-instance 'gtk-button :label "最新レス"
-                                     :height-request 20 :width-request 40 :expand nil))
-         (tl-vbox (make-instance 'gtk-box ;;レス表示部分
-                                 :orientation :vertical
-                                 :border-width 12
-                                 :spacing 6))
-         (top-hbox (make-instance 'gtk-box ;;URLとか
-                                  :orientation :horizontal
-                                  :spacing 6 :expand nil))
-         (bottom-hbox (make-instance 'gtk-box ;;ステータスエリア
-                                     :orientation :horizontal
-                                     :spacing 6 :expand nil))
-         (win-vbox (make-instance 'gtk-box
-                                  :orientation :vertical
-                                  :expand nil
-                                  :spacing 6)))
+         (post-menu-item        (gtk-menu-item-new-with-label "投稿..."))
+         (new-thread-menu-item  (gtk-menu-item-new-with-label "スレッド作成..."))
+         (options-menu-item     (gtk-menu-item-new-with-label "設定"))
+         (options-menu          (gtk-menu-new))
+         (general-menu-item     (gtk-menu-item-new-with-label "全般"))
+         (notify-menu-item      (gtk-menu-item-new-with-label "通知"))
+         (vadj                  (gtk-scrolled-window-get-vadjustment scrolled))
+         (title-label  (make-instance 'gtk-label
+                                      :label "URL"))
+         (url-entry    (make-instance 'gtk-entry
+                                      :text (if (null preurl) "" preurl)
+                                      :width-request 400))
+         (load-switch  (make-instance 'gtk-switch :active nil
+                                      :height-request 20
+                                      :width-request 40
+                                      :expand nil))
+         (status-label (make-instance 'gtk-label
+                                      :label "停止中"
+                                      :xalign 0.0))
+         (new-res-btn  (make-instance 'gtk-button
+                                      :label "最新レス"
+                                      :height-request 20
+                                      :width-request 40
+                                      :expand nil))
+         (tl-vbox      (make-instance 'gtk-box ;;レス表示部分
+                                      :orientation :vertical
+                                      :border-width 12
+                                      :spacing 6))
+         (top-hbox     (make-instance 'gtk-box ;;URLとか
+                                      :orientation :horizontal
+                                      :spacing 6
+                                      :expand nil))
+         (bottom-hbox  (make-instance 'gtk-box ;;ステータスエリア
+                                      :orientation :horizontal
+                                      :spacing 6
+                                      :expand nil))
+         (win-vbox     (make-instance 'gtk-box
+                                      :orientation :vertical
+                                      :expand nil
+                                      :spacing 6)))
     (setf (main-window-url-entry window) url-entry)
     (setf (main-window-load-switch window) load-switch)
 
