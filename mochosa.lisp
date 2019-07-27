@@ -8,6 +8,8 @@
 
 (in-package :mochosa)
 
+(load "compose-message-dialog.lisp")
+
 (defmacro do-later (&body body)
   `(g-timeout-add
     1
@@ -33,11 +35,20 @@
 (defconstant +application-name+ "もげぞうβは超サイコー")
 
 (defstruct mocho
+  read-url
   (res-lst nil) ;;レスstructリスト
-  (dlog-lst nil)
   (new-res-num 0)
   (elapsed 0) ;;カウントダウン表示用
   (interval 0)) ;;カウントダウン設定
+
+(defun read-url-rawmode-url (read-url)
+  (cl-ppcre:regex-replace "read"
+                          read-url
+                          "rawmode"))
+
+(defmethod mocho-rawmode-url ((m mocho))
+  (and (mocho-read-url m)
+   (read-url-rawmode-url (mocho-read-url m))))
 
 (declaim (ftype (function (string) string) fix-semicolonless-amp)
          (ftype (function (string) string) escape-stray-amp)
@@ -497,18 +508,9 @@
       (gtk-box-pack-start vbox1 new-label :expand nil)
       )))
 
-;;ダイアログの位置を調整
-(defun reset-dialog-position (mocho)
-  (loop for dialog in (reverse (mocho-dlog-lst mocho))
-        for i from 0
-        do (gtk-window-move dialog ;;ダイアログ表示する位置
-                            (- (gdk-screen-width) 400)
-                            (* i 130))
-           (gtk-widget-show dialog)))
-
 ;;新着レス
-(defun get-new-res (url new-res-num)
-  (handler-case (dex:get (concatenate 'string url (write-to-string new-res-num)))
+(defun get-res-line (url res-num)
+  (handler-case (dex:get (concatenate 'string url (write-to-string res-num)))
     (USOCKET:NS-HOST-NOT-FOUND-ERROR () nil)
     (dex:http-request-bad-request () nil)
     (dex:http-request-failed (e) (declare (ignore e)) nil)
@@ -565,29 +567,35 @@
   (loop while (g-main-context-iteration (cffi:null-pointer) nil)))
 
 ;;オートリロード新着レス表示
-(defmethod auto-reload (url count-down-label (m mocho) vadj scrolled hbox1 vbox1)
-  (incf (mocho-elapsed m))
+(defmethod auto-reload (url count-down-label (m mocho) vadj scrolled vbox1 window)
   (with-slots
         (elapsed interval new-res-num)
       m
+
+    (when (>= new-res-num 1001)
+      (setf (gtk-switch-active (main-window-load-switch window)) nil)
+      (return-from auto-reload))
+
+    (incf elapsed)
     (if (>= elapsed interval)
         (progn
           (setf (gtk-label-label count-down-label) "新着レス確認中")
-          (do-later
-              (loop with line
-                 while (not (equal "" (setf line (get-new-res url new-res-num))))
-                 do
-                   (let ((r (make-res-from-string line)))
-                     (notify r)
-                     (add-res r m vbox1)
-                     (scroll-bot vadj)
-                     (gtk-widget-show-all scrolled)
-                     (speak-res r)
-                     (incf new-res-num)))
-            (setf elapsed 0)
-            (setf (gtk-label-label count-down-label) (make-number-c elapsed interval)))
-          )
-        (gtk-label-set-markup count-down-label (make-number-c elapsed interval)))))
+          (flush-draw-queue)
+          (loop with line
+             while (not (equal "" (setf line (get-res-line url new-res-num))))
+             do
+               (let ((r (make-res-from-string line)))
+                 (add-res r m vbox1)
+                 (scroll-bot vadj)
+                 (gtk-widget-show-all vbox1)
+                 (flush-draw-queue)
+                 (notify r)
+                 (speak-res r)
+                 (incf new-res-num)))
+          (setf elapsed 0)
+          (setf (gtk-label-label count-down-label) (make-number-c elapsed interval)))
+        (progn
+          (gtk-label-set-markup count-down-label (make-number-c elapsed interval))))))
 
 ;;options.dat 1:オートリロード時間 2:ポップアップタイム 3:サウンド
 ;;設定保存
@@ -793,7 +801,7 @@
              (column (gtk-tree-view-column-new-with-attributes "タイトル" renderer "text" 0)))
         (gtk-tree-view-append-column tree-view column))
       (let* ((renderer (gtk-cell-renderer-text-new))
-             (column (gtk-tree-view-column-new-with-attributes "レス" renderer "text" 1)))
+             (column (gtk-tree-view-column-new-with-attributes "レス" renderer "textb" 1)))
         (gtk-tree-view-append-column tree-view column))
 
       (let ((scrolled-window (make-instance 'gtk-scrolled-window
@@ -836,11 +844,18 @@
 (defun next-thread-title (title)
   (let* ((tokens (nreverse (ppcre:all-matches-as-strings "\\d+|[^\\d]+" title)))
          (pos (position-if (lambda (token) (ppcre:scan "^\\d+$" token)) tokens)))
-    (if pos
-        (progn
-          (setf (car (nthcdr pos tokens)) (write-to-string (1+ (read-from-string (nth pos tokens)))))
-          (format nil "~{~A~}" (nreverse tokens)))
-        nil)))
+    (when pos
+      (setf (car (nthcdr pos tokens)) (write-to-string (1+ (read-from-string (nth pos tokens)))))
+      (format nil "~{~A~}" (nreverse tokens)))))
+
+(defun prev-thread-title (title)
+  (let* ((tokens (nreverse (ppcre:all-matches-as-strings "\\d+|[^\\d]+" title)))
+         (pos (position-if (lambda (token) (ppcre:scan "^\\d+$" token)) tokens)))
+    (when pos
+      (let ((n (read-from-string (nth pos tokens))))
+        (when (> n 1)
+          (setf (car (nthcdr pos tokens)) (write-to-string (1- n)))
+          (format nil "~{~A~}" (nreverse tokens)))))))
 
 (defun next-thread (current-title subjects)
   (let ((target (next-thread-title current-title)))
@@ -855,10 +870,22 @@
              (return-from next-thread subject))))
     nil))
 
+(defun read-url-board (url)
+  (multiple-value-bind
+        (match-start match-end reg-starts reg-ends)
+      (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/([a-z]+/\\d+)/\\d+/" url)
+    (declare (ignore match-end))
+    (if match-start
+        (let ((board (subseq url (aref reg-starts 0) (aref reg-ends 0))))
+          board)
+        nil)))
+
+(defun read-url-thread-title (url)
+  (res-title (make-res-from-string (get-res-line (read-url-rawmode-url url) 1))))
+
 (defmethod initialize-instance :after ((window main-window) &key)
   (let* (
-         (preurl (load-url)) ;;前回開いたURL
-         (rawmode-url nil) (mocho (make-mocho :interval (floor *auto-reload-time* 1000)))
+         (mocho (make-mocho :interval (floor *auto-reload-time* 1000)))
 
          ;; ウィジェット
          (scrolled     (make-instance 'gtk-scrolled-window
@@ -882,7 +909,7 @@
          (title-label  (make-instance 'gtk-label
                                       :label "URL"))
          (url-entry    (make-instance 'gtk-entry
-                                      :text (if (null preurl) "" preurl)
+                                      :text (or (load-url) "")
                                       :width-request 400))
          (load-switch  (make-instance 'gtk-switch :active nil
                                       :height-request 20
@@ -923,6 +950,62 @@
       (setf (gtk-menu-item-submenu file-menu-item) file-menu)
       (gtk-menu-shell-append file-menu quit-menu-item)
 
+      ;; Go
+      (let ((menu (gtk-menu-new)))
+        (gtk-menu-shell-append menu-bar (let ((mi (gtk-menu-item-new-with-label "移動")))
+                                          (setf (gtk-menu-item-submenu mi) menu)
+                                          mi))
+        (gtk-menu-shell-append menu (let ((mi (gtk-menu-item-new-with-label "次スレ")))
+                                      (g-signal-connect
+                                       mi
+                                       "activate"
+                                       (lambda (w)
+                                         (declare (ignore w))
+                                         (and (mocho-read-url mocho)
+                                              (let* ((board (read-url-board (mocho-read-url mocho)))
+                                                     (ctitle (read-url-thread-title (mocho-read-url mocho)))
+                                                     (ntitle (next-thread-title ctitle))
+                                                     (sub (find-if (lambda (sub) (string-equal (first sub) ntitle))
+                                                                   (get-subjects board))))
+                                                  (if sub
+                                                      (main-window-start window board (third sub))
+                                                      (let ((dlg (gtk-message-dialog-new
+                                                                  window
+                                                                  '(:destroy-with-parent)
+                                                                  :error
+                                                                  :close
+                                                                  "次スレ~%~A~%がみつかりません。"
+                                                                  ntitle)))
+                                                        (gtk-dialog-run dlg)
+                                                        (gtk-widget-destroy dlg))
+                                                      )))))
+                                       mi))
+        (gtk-menu-shell-append menu (let ((mi (gtk-menu-item-new-with-label "前スレ")))
+                                      (g-signal-connect
+                                       mi
+                                       "activate"
+                                       (lambda (w)
+                                         (declare (ignore w))
+                                         (and (mocho-read-url mocho)
+                                              (let* ((board (read-url-board (mocho-read-url mocho)))
+                                                     (ctitle (read-url-thread-title (mocho-read-url mocho)))
+                                                     (ptitle (prev-thread-title ctitle))
+                                                     (sub (find-if (lambda (sub) (string-equal (first sub) ptitle))
+                                                                   (get-subjects board))))
+                                                  (if sub
+                                                      (main-window-start window board (third sub))
+                                                      (let ((dlg (gtk-message-dialog-new
+                                                                  window
+                                                                  '(:destroy-with-parent)
+                                                                  :error
+                                                                  :close
+                                                                  "前スレ~%~A~%がみつかりません。"
+                                                                  ptitle)))
+                                                        (gtk-dialog-run dlg)
+                                                        (gtk-widget-destroy dlg))
+                                                      )))))
+                                      mi)))
+
       ;;Tools
       (gtk-menu-shell-append menu-bar tools-menu-item)
       (setf (gtk-menu-item-submenu tools-menu-item) tools-menu)
@@ -930,6 +1013,19 @@
       (gtk-menu-shell-append tools-menu (gtk-separator-menu-item-new))
       (gtk-menu-shell-append tools-menu post-menu-item)
       (gtk-menu-shell-append tools-menu new-thread-menu-item)
+      (g-signal-connect post-menu-item "activate"
+                        (lambda (w)
+                          (declare (ignore w))
+                          (block nil
+                            (unless (mocho-read-url mocho)
+                              (return)) ;?
+                            (let ((dlg (make-instance 'compose-message-dialog
+                                                      :transient-for window
+                                                      :thread-title "")))
+                              (case (gtk-dialog-run dlg)
+                                (:ok)
+                                (:cancel))
+                              (gtk-widget-destroy dlg)))))
 
       ;;Options
       (gtk-menu-shell-append menu-bar options-menu-item)
@@ -949,13 +1045,9 @@
        "activate"
        (lambda (widget)
          (declare (ignore widget))
-         (multiple-value-bind
-               (match-start match-end reg-starts reg-ends)
-             (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/([a-z]+/\\d+)/\\d+/" (gtk-entry-text url-entry))
-           (declare (ignore match-end))
-           (when match-start
-             (let ((board (subseq (gtk-entry-text url-entry) (aref reg-starts 0) (aref reg-ends 0))))
-               (main-window-open-thread window board))))))
+         (let ((url (gtk-entry-text url-entry)))
+           (when (read-url-board url)
+             (main-window-open-thread window (read-url-board url))))))
 
       (g-signal-connect
        general-menu-item
@@ -991,9 +1083,10 @@
          (if (gtk-switch-active widget) ;; t:on nil:off
              (if (thread-url-p (gtk-entry-text url-entry))
                  (progn
-                   (setf (gtk-entry-text url-entry)
-                         (normalize-thread-url (gtk-entry-text url-entry)))
-                   (save-url (gtk-entry-text url-entry))
+                   (let ((url (normalize-thread-url (gtk-entry-text url-entry))))
+                     (setf (mocho-read-url mocho) url)
+                     (setf (gtk-entry-text url-entry) url)
+                     (save-url url))
 
                    ;;一回読み込んだあとにもっかい読み込むときレス消す
                    (gtk-widget-destroy tl-vbox)
@@ -1003,13 +1096,10 @@
                                                       :orientation :vertical
                                                       :border-width 12
                                                       :spacing 6))
-                   (setf rawmode-url (cl-ppcre:regex-replace "read"
-                                                             (gtk-entry-text url-entry)
-                                                             "rawmode"))
                    (gtk-label-set-markup status-label "スレッド読み込み中")
                    (do-later
                        ;; 読み込み処理開始。
-                       (let ((data (handler-case (dex:get rawmode-url)
+                       (let ((data (handler-case (dex:get (mocho-rawmode-url mocho))
                                      (USOCKET:NS-HOST-NOT-FOUND-ERROR () nil)
                                      (dex:http-request-bad-request () nil)
                                      (dex:http-request-failed (e) (declare (ignore e)) nil))))
@@ -1029,7 +1119,8 @@
                      (setf (main-window-id window) (g-timeout-add
                                1000
                                (lambda ()
-                                 (auto-reload rawmode-url status-label mocho vadj scrolled bottom-hbox tl-vbox)
+                                 (auto-reload (mocho-rawmode-url mocho)
+                                              status-label mocho vadj scrolled tl-vbox window)
                                  ;;常にカウントダウンするのでtを返す
                                  t)))
                      (do-later
