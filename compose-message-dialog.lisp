@@ -23,7 +23,7 @@
         (ppcre:split "/" board)
       (dex:post
        url
-       :headers `(("User-Agent" . "MogezouBetaWaChooSaikoo/0.1.0")
+       :headers `(("User-Agent" . "MogezouBetaWaChouSaikou/0.1.0")
                   ("Referer" . ,referer)
                   (:content-type . "application/x-www-form-urlencoded"))
        :content (url-encode-params
