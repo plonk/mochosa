@@ -876,8 +876,16 @@
       (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/([a-z]+/\\d+)/\\d+/" url)
     (declare (ignore match-end))
     (if match-start
-        (let ((board (subseq url (aref reg-starts 0) (aref reg-ends 0))))
-          board)
+        (subseq url (aref reg-starts 0) (aref reg-ends 0))
+        nil)))
+
+(defun read-url-thread (url)
+  (multiple-value-bind
+        (match-start match-end reg-starts reg-ends)
+      (ppcre:scan "^https?://jbbs.shitaraba.net/bbs/read\\.cgi/[a-z]+/\\d+/(\\d+)/" url)
+    (declare (ignore match-end))
+    (if match-start
+        (subseq url (aref reg-starts 0) (aref reg-ends 0))
         nil)))
 
 (defun read-url-thread-title (url)
@@ -1023,7 +1031,16 @@
                                                       :transient-for window
                                                       :thread-title "")))
                               (case (gtk-dialog-run dlg)
-                                (:ok)
+                                (:ok
+                                 (with-slots (text-view name-entry email-entry)
+                                     dlg
+                                   (let ((name (gtk-entry-text name-entry))
+                                         (email (gtk-entry-text email-entry))
+                                         (body (gtk-text-buffer-text
+                                                (gtk-text-view-get-buffer text-view)))
+                                         (board (read-url-board (mocho-read-url mocho)))
+                                         (thread (read-url-thread (mocho-read-url mocho))))
+                                     (post-message-shitaraba board thread name email body))))
                                 (:cancel))
                               (gtk-widget-destroy dlg)))))
 
