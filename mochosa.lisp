@@ -1147,7 +1147,7 @@
   ))
 
 (defun main ()
-  (load-options);;初期設定読み込み
+  (load-options)
   (within-main-loop
     (let* ((window (make-instance 'main-window
                                   :type :toplevel
