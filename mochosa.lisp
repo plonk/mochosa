@@ -132,9 +132,9 @@
      (let ((url (subseq target-string match-start match-end)))
        (format nil "<a href=\"~A\">~A</a>" (supplement-h url) url)))))
 
-;;アンカーのタグを外した本文と、アンカーに指定されていたread.cgiへの
-;;パスのリストを返す
 (defun parse-untag-anchors (honbun)
+  "アンカーのタグを外した本文と、アンカーに指定されていたread.cgiへの
+パスのリストを返す"
   (let ((path-list nil))
     (let ((honbun1 (ppcre:regex-replace-all
                     "<a href=\"(.*?)\" target=\"_blank\">(.*?)</a>"
@@ -440,15 +440,15 @@
                       (parse-integer $1 :radix 10))))
        (format nil "~A" (code-char code))))))
 
-;;レス作成　Pangoマークアップされた本文と、アンカーのパスリストを返す
 (defmethod parse-res ((r res))
+  "レス作成　Pangoマークアップされた本文と、アンカーのパスリストを返す。"
   (multiple-value-bind
         (html path-list)
       (compose-html r)
     (values (html->pango-markup html) path-list)))
 
-;;アンカーのパスを該当レスを取得するrawmode.cgiへのURLに変換する
 (defun anchor-path->rawmode-url (path)
+  "アンカーのパスを該当レスを取得するrawmode.cgiへのURLに変換する。"
   (concatenate 'string "https://jbbs.shitaraba.net"
                (ppcre:regex-replace "read\.cgi" path "rawmode.cgi")))
 
@@ -469,12 +469,12 @@
 (defun dat-lines (data-text)
   (ppcre:split "\\n" data-text))
 
-;;レスをPangoマークアップにしてoutput-streamに出力する
 (defmethod print-res (output-stream (r res))
+  "レスをPangoマークアップにしてoutput-streamに出力する。"
   (format output-stream "~A" (parse-res r)))
 
-;;アンカーのリストから、該当レスを取得してPangoマークアップとして整形する
 (defmethod make-tooltip-text ((mocho mocho) anchor-path-list)
+  "アンカーのリストから、該当レスを取得してPangoマークアップとして整形する。"
   (let ((ranges (mapcar #'anchor-path->range anchor-path-list))
         (output (make-string-output-stream)))
     (loop for range in ranges
@@ -516,20 +516,20 @@
     (dex:http-request-failed (e) (declare (ignore e)) nil)
     ))
 
-;;新着メッセージ生成と新着メッセージのポップアップ生成
 (defmethod notify ((r res))
+  "新着メッセージ生成と新着メッセージのポップアップ生成。"
   (let* ((honbun (parse-res r)))
     (sb-ext:run-program "yomiage-send" (list "新着メッセージ" (decode-numeric-character-references honbun)) :search t)
     ))
 
-;;スクロールウィンドウの一番下へ
 (defun scroll-bot (vadj)
+  "スクロールウィンドウの一番下へ。"
   (do-later
       (gtk-adjustment-set-value vadj (- (gtk-adjustment-upper vadj)
                                         (gtk-adjustment-page-size vadj)))))
 
-;;カウントダウン文字列生成  改造したいところ
 (defun make-number-c (elapsed interval)
+  "カウントダウン文字列生成。改造したいところ。"
   (let ((dots (make-string elapsed :initial-element #\█))
         (spaces (make-string (- interval elapsed) :initial-element #\░)))
     (format nil "待機中 <span color=\"#080\">~A</span>~A" dots spaces)))
@@ -566,8 +566,8 @@
 (defun flush-draw-queue ()
   (loop while (g-main-context-iteration (cffi:null-pointer) nil)))
 
-;;オートリロード新着レス表示
 (defmethod auto-reload (url count-down-label (m mocho) vadj scrolled vbox1 window)
+  "オートリロード新着レス表示。"
   (with-slots
         (elapsed interval new-res-num)
       m
@@ -597,16 +597,16 @@
         (progn
           (gtk-label-set-markup count-down-label (make-number-c elapsed interval))))))
 
-;;options.dat 1:オートリロード時間 2:ポップアップタイム 3:サウンド
-;;設定保存
 (defun save-options ()
+  "options.dat 1:オートリロード時間 2:ポップアップタイム 3:サウンド
+設定保存。"
   (with-open-file (out "options.dat" :direction :output
                                      :if-exists :supersede)
     (dolist (var +option-variables+)
       (format out "(~S ~S)~%" var (eval var)))))
 
-;設定読み込み
 (defun load-options ()
+  "設定読み込み。"
   (with-open-file (in "options.dat" :direction :input
                                     :if-does-not-exist nil)
     (when in
@@ -748,9 +748,9 @@
       )
     (gtk-widget-destroy dlg)))
 
-;; スレッド一覧。文字列のリスト、(スレタイ レス数 スレッドID) を要素と
-;; するリストを返す。
 (defun get-subjects (board)
+  "スレッド一覧。文字列のリスト、(スレタイ レス数 スレッドID) を要素と
+するリストを返す。"
   ;; したらばのsubject.txtにcharsetが指定されておらず、自動的に文字列
   ;; 化できないので、バイナリでダウンロードして文字列に変換する。
   (loop
