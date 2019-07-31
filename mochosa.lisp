@@ -8,8 +8,6 @@
 
 (in-package :mochosa)
 
-(load "compose-message-dialog.lisp")
-
 (defmacro do-later (&body body)
   `(g-timeout-add
     1
@@ -21,7 +19,6 @@
 (defparameter *popup-time* 8000) ;;新着メッセージのポップアップ時間
 (defparameter *sound*
   "/usr/share/sounds/Yaru/stereo/message-new-instant.ogg")
-(defparameter *say-command* "vtsay")
 
 (defparameter *auto-move* t)
 (defparameter *auto-create* nil)
@@ -29,10 +26,17 @@
 (defparameter *ac-email* "sage")
 (defparameter *ac-verify* t)
 
-(defconstant +option-variables+ '(*auto-reload-time* *popup-time* *sound* *say-command*
-                                  *auto-move* *auto-create* *ac-name* *ac-email* *ac-verify*))
+(defparameter *notification-programs* '("notify-send 新着メッセージ $MESSAGE"))
+
+(defconstant +option-variables+ '(*auto-reload-time* *popup-time* *sound*
+                                  *auto-move* *auto-create* *ac-name* *ac-email* *ac-verify*
+                                  *notification-programs*))
 
 (defconstant +application-name+ "もげぞうβは超サイコー")
+
+
+(load "compose-message-dialog.lisp")
+(load "notification-settings-dialog.lisp")
 
 (defstruct mocho
   read-url
@@ -98,7 +102,8 @@
   (if (string-equal "" (res-mail r))
       (format nil "<span color=\"#008800\"><b>~A</b></span>"
               (res-name-html r))
-      (format nil "<span color=\"#0000FF\" underline=\"single\"><b>~A</b></span>"
+      ;; underline=\"single\"
+      (format nil "<span color=\"#0000FF\"><b>~A</b></span>"
               (res-name-html r))))
 
 ;; レス全体をHTMLとして生成する。
@@ -107,7 +112,8 @@
         (honbun path-list)
       (res-honbun-html r)
     (values
-     (format nil "<span color=\"#0000FF\" underline=\"single\">~A</span>：~A：~A<br>~A<br>"
+     ;; underline=\"single\"
+     (format nil "<span color=\"#0000FF\">~A</span>：~A：~A<br>~A<br>"
              (res-number r)
              (colorized-name-html r)
              (res-date r)
@@ -516,11 +522,39 @@
     (dex:http-request-failed (e) (declare (ignore e)) nil)
     ))
 
+(defmethod parse-expand-cmdline (cmdline (r res))
+  (let ((tokens (ppcre:split "\\s+" cmdline))
+        ($MESSAGE (parse-res r))
+        ($BODY (untag-all (html->pango-markup (res-honbun r)))))
+    (mapcar (lambda (tok)
+              (cond
+                ((string= tok "$BODY") $BODY)
+                ((string= tok "$MESSAGE") $MESSAGE)
+                (t
+                 tok)))
+            tokens)))
+
 (defmethod notify ((r res))
-  "新着メッセージ生成と新着メッセージのポップアップ生成。"
-  (let* ((honbun (parse-res r)))
-    (sb-ext:run-program "yomiage-send" (list "新着メッセージ" (decode-numeric-character-references honbun)) :search t)
-    ))
+  "新着レスを通知。"
+  (loop for cmdline in *notification-programs*
+     do
+       (let* ((tokens (parse-expand-cmdline cmdline r))
+              (proc (sb-ext:run-program
+                     (car tokens)
+                     (cdr tokens) :search t :error t :output t)))
+         (when (/= 0 (sb-ext:process-exit-code proc))
+           (let ((dialog (gtk-message-dialog-new
+                          nil
+                          '(:destroy-with-parent)
+                          :error
+                          :close
+                          "コマンド ~S が異常終了しました。~%ステータスコード = ~A"
+                          cmdline
+                          (sb-ext:process-exit-code proc))))
+             (gtk-dialog-run dialog)
+             (gtk-widget-destroy dialog))))
+       )
+  )
 
 (defun scroll-bot (vadj)
   "スクロールウィンドウの一番下へ。"
@@ -553,16 +587,6 @@
 (defun untag-all (string)
   (ppcre:regex-replace-all "<[^>]*>" string ""))
 
-(defun speak (str)
-  (let ((words (remove "" (ppcre:split "\\s+" *say-command*) :test #'string-equal)))
-    (when words
-      (handler-case
-          (sb-ext:run-program (first words) (append (rest words) (list str)) :search t)
-        (simple-error (e) (format t "~A~%" e))))))
-
-(defmethod speak-res ((r res))
-  (speak (decode-numeric-character-references (untag-all (res-honbun r)))))
-
 (defun flush-draw-queue ()
   (loop while (g-main-context-iteration (cffi:null-pointer) nil)))
 
@@ -590,7 +614,6 @@
                  (gtk-widget-show-all vbox1)
                  (flush-draw-queue)
                  (notify r)
-                 (speak-res r)
                  (incf new-res-num)))
           (setf elapsed 0)
           (setf (gtk-label-label count-down-label) (make-number-c elapsed interval)))
@@ -603,7 +626,7 @@
   (with-open-file (out "options.dat" :direction :output
                                      :if-exists :supersede)
     (dolist (var +option-variables+)
-      (format out "(~S ~S)~%" var (eval var)))))
+      (format out "(~S ~S)~%" var (list 'quote (eval var))))))
 
 (defun load-options ()
   "設定読み込み。"
@@ -647,6 +670,7 @@
     (g-source-remove (main-window-id w)))
   (leave-gtk-main))
 
+;; 任意のコマンドを実行する設定ダイアログを作るときに、これを下敷にやる。
   ;; (let* ((dlg (gtk-dialog-new-with-buttons "設定" window '(:modal)))
   ;;        (vbox (gtk-dialog-get-content-area dlg))
   ;;        (top-hbox (make-instance 'gtk-box :orientation :horizontal :spacing 6))
@@ -670,6 +694,7 @@
   ;;   (case (gtk-dialog-run dlg)
   ;;     (:ok (setf *say-command* (gtk-entry-text entry))))
   ;;   (gtk-widget-destroy dlg)
+
 (defmethod initialize-instance :after ((dlg options-dialog) &key transient-for)
   (let* ((vbox (gtk-dialog-get-content-area dlg)))
     (setf (gtk-window-transient-for dlg) transient-for)
@@ -1049,6 +1074,18 @@
       (setf (gtk-menu-item-submenu options-menu-item) options-menu)
       (gtk-menu-shell-append options-menu general-menu-item)
       (gtk-menu-shell-append options-menu notify-menu-item)
+      (g-signal-connect
+       notify-menu-item
+       "activate"
+       (lambda (w)
+         (declare (ignore w))
+
+         (let ((dialog (make-instance 'notification-settings-dialog :transient-for window)))
+           (case (gtk-dialog-run dialog)
+             (:ok
+              (setf *notification-programs* (notification-settings-dialog-get-programs dialog)))
+             (:cancel))
+           (gtk-widget-destroy dialog))))
 
       (g-signal-connect
        quit-menu-item
