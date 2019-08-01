@@ -16,9 +16,6 @@
       nil)))
 
 (defparameter *auto-reload-time* 9000) ;;自動読み込みの時間
-(defparameter *popup-time* 8000) ;;新着メッセージのポップアップ時間
-(defparameter *sound*
-  "/usr/share/sounds/Yaru/stereo/message-new-instant.ogg")
 
 (defparameter *auto-move* t)
 (defparameter *auto-create* nil)
@@ -28,7 +25,7 @@
 
 (defparameter *notification-programs* '("notify-send 新着メッセージ $MESSAGE"))
 
-(defconstant +option-variables+ '(*auto-reload-time* *popup-time* *sound*
+(defconstant +option-variables+ '(*auto-reload-time*
                                   *auto-move* *auto-create* *ac-name* *ac-email* *ac-verify*
                                   *notification-programs*))
 
@@ -79,8 +76,7 @@
               )))
 
 (defmethod res-name-html ((r res))
-  ;; 名前欄では & が &amp (←セミコロンなし)とエスケープされるので、こ
-  ;; れを正しい &amp; に直す。
+  "名前欄では & が &amp (←セミコロンなし)とエスケープされるので、これを正しい &amp; に直す。"
   (fix-semicolonless-amp (res-name r)))
 
 (defmethod res-honbun-html ((r res))
@@ -90,15 +86,15 @@
     (values (escape-stray-amp (linkify-urls honbun))
             path-list)))
 
-;;文字実体参照の先頭でない、孤立したアンパサンドを &amp; に置換
 (defun escape-stray-amp (res)
+  "文字実体参照の先頭でない、孤立したアンパサンドを &amp; に置換"
   (ppcre:regex-replace-all "&(?![#A-Za-z0-9]+;)" res "&amp;"))
 
 (defun fix-semicolonless-amp (str)
   (ppcre:regex-replace-all "&amp" str "&amp;"))
 
-;; メールのあるなしに応じて色を付けた名前のマークアップを返す。
-(defmethod colorized-name-html ((r res))
+(defmethod colorized-name-pango ((r res))
+  "メールのあるなしに応じて色を付けた名前のマークアップを返す。"
   (if (string-equal "" (res-mail r))
       (format nil "<span color=\"#008800\"><b>~A</b></span>"
               (res-name-html r))
@@ -106,8 +102,8 @@
       (format nil "<span color=\"#0000FF\"><b>~A</b></span>"
               (res-name-html r))))
 
-;; レス全体をHTMLとして生成する。
-(defmethod compose-html ((r res))
+(defmethod compose-pango ((r res))
+  "レス全体をPangoマークアップとして生成する。"
   (multiple-value-bind
         (honbun path-list)
       (res-honbun-html r)
@@ -115,7 +111,7 @@
      ;; underline=\"single\"
      (format nil "<span color=\"#0000FF\">~A</span>：~A：~A<br>~A<br>"
              (res-number r)
-             (colorized-name-html r)
+             (colorized-name-pango r)
              (res-date r)
              honbun)
      path-list)))
@@ -154,8 +150,8 @@
                         (format nil "<span color=\"#0000FF\" underline=\"single\">~A</span>" text))))))
       (values honbun1  (reverse path-list)))))
 
-;; HTMLの文字名をUnicodeコードポイントで返す。
 (defun html-character-name->code-point (name)
+  "HTMLの文字名をUnicodeコードポイントで返す。"
   (let ((table '((|exclamation|  . #x0021)
                  (|quot|         . #x0022)
                  (|percent|      . #x0025)
@@ -419,9 +415,8 @@
           (cdr entry)
           nil))))
 
-;; (XMLベースの)Pangoマークアップが対応していない<br>タグと文字実体参
-;; 照を、それぞれ改行文字と数値実体参照に置換する。
 (defun html->pango-markup (html)
+  "(XMLベースの)Pangoマークアップが対応していない<br>タグと文字実体参照を、それぞれ改行文字と数値実体参照に置換する。"
   (ppcre:regex-replace-all
    "<br>|&([A-Za-z]+);" html
    (lambda (target-string start end match-start match-end reg-starts reg-ends)
@@ -450,7 +445,7 @@
   "レス作成　Pangoマークアップされた本文と、アンカーのパスリストを返す。"
   (multiple-value-bind
         (html path-list)
-      (compose-html r)
+      (compose-pango r)
     (values (html->pango-markup html) path-list)))
 
 (defun anchor-path->rawmode-url (path)
@@ -471,8 +466,8 @@
           (list (read-from-string left) (read-from-string right))
           (list (read-from-string left) (read-from-string left))))))
 
-;;rawmode.cgiで取得されるDATを一行ごとのリストにする
 (defun dat-lines (data-text)
+  "rawmode.cgiで取得されるDATを一行ごとのリストにする"
   (ppcre:split "\\n" data-text))
 
 (defmethod print-res (output-stream (r res))
@@ -669,31 +664,6 @@
   (when (/= (main-window-id w) 0)
     (g-source-remove (main-window-id w)))
   (leave-gtk-main))
-
-;; 任意のコマンドを実行する設定ダイアログを作るときに、これを下敷にやる。
-  ;; (let* ((dlg (gtk-dialog-new-with-buttons "設定" window '(:modal)))
-  ;;        (vbox (gtk-dialog-get-content-area dlg))
-  ;;        (top-hbox (make-instance 'gtk-box :orientation :horizontal :spacing 6))
-  ;;        (entry (gtk-entry-new))
-  ;;        (test-btn (make-instance 'gtk-button :label "テスト")))
-
-  ;;   (gtk-dialog-add-button dlg "gtk-cancel" :cancel)
-  ;;   (gtk-dialog-add-button dlg "gtk-ok" :ok)
-  ;;   (gtk-box-pack-start top-hbox (gtk-label-new "コマンド:") :expand nil)
-  ;;   (gtk-box-pack-start top-hbox entry :expand t :fill t)
-  ;;   (setf (gtk-entry-text entry) *say-command*)
-  ;;   (setf (gtk-widget-tooltip-text test-btn) "「テスト」と読み上げます。")
-  ;;   (gtk-box-pack-start top-hbox test-btn :expand nil)
-  ;;   (g-signal-connect test-btn "clicked"
-  ;;                     (lambda (w)
-  ;;                       (declare (ignore w))
-  ;;                       (let ((*say-command* (gtk-entry-text entry))) ; 動的束縛
-  ;;                         (speak "テスト"))))
-  ;;   (gtk-box-pack-start vbox top-hbox)
-  ;;   (gtk-widget-show-all vbox)
-  ;;   (case (gtk-dialog-run dlg)
-  ;;     (:ok (setf *say-command* (gtk-entry-text entry))))
-  ;;   (gtk-widget-destroy dlg)
 
 (defmethod initialize-instance :after ((dlg options-dialog) &key transient-for)
   (let* ((vbox (gtk-dialog-get-content-area dlg)))
